@@ -11,13 +11,13 @@ AppPublisher=Lumi AI
 AppPublisherURL=https://github.com/longortovvolodja-del/Lumi-AI
 AppSupportURL=https://github.com/longortovvolodja-del/Lumi-AI/issues
 AppUpdatesURL=https://github.com/longortovvolodja-del/Lumi-AI/releases
-DefaultDirName={localappdata}\\Programs\\Lumi AI
+DefaultDirName={localappdata}\Programs\Lumi AI
 DefaultGroupName=Lumi AI
 DisableProgramGroupPage=yes
-OutputDir=..\\dist
+OutputDir=..\dist
 OutputBaseFilename=Lumi-Setup-{#AppVersion}
-SetupIconFile=..\\dist\\lumi.ico
-UninstallDisplayIcon={app}\\Lumi.exe
+SetupIconFile=..\dist\lumi.ico
+UninstallDisplayIcon={app}\Lumi.exe
 ArchitecturesAllowed=x64
 ArchitecturesInstallIn64BitMode=x64
 MinVersion=10.0
@@ -26,14 +26,14 @@ PrivilegesRequiredOverridesAllowed=dialog
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
-WizardImageFile=..\\dist\\installer-wizard.bmp
-WizardSmallImageFile=..\\dist\\installer-small.bmp
+WizardImageFile=..\dist\installer-wizard.bmp
+WizardSmallImageFile=..\dist\installer-small.bmp
 CloseApplications=force
 RestartApplications=no
 Uninstallable=yes
 
 [Languages]
-Name: "russian"; MessagesFile: "compiler:Languages\\Russian.isl"
+Name: "russian"; MessagesFile: "compiler:Languages\Russian.isl"
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Messages]
@@ -47,12 +47,12 @@ FinishedLabel=Lumi AI установлена.%n%nНажми «Готово», ч
 Name: "desktopicon"; Description: "Создать ярлык на рабочем столе"; GroupDescription: "Дополнительные задачи:"; Flags: unchecked
 
 [Files]
-Source: "..\\dist\\Lumi\\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
-Source: "..\\dist\\LumiUpdater.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\dist\Lumi\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "..\dist\LumiUpdater.exe"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
-Name: "{group}\\Lumi AI"; Filename: "{app}\\Lumi.exe"
-Name: "{autodesktop}\\Lumi AI"; Filename: "{app}\\Lumi.exe"; Tasks: desktopicon
+Name: "{group}\Lumi AI"; Filename: "{app}\Lumi.exe"
+Name: "{autodesktop}\Lumi AI"; Filename: "{app}\Lumi.exe"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\\Lumi.exe"; Description: "Запустить Lumi AI"; Flags: postinstall nowait skipifsilent
+Filename: "{app}\Lumi.exe"; Description: "Запустить Lumi AI"; Flags: postinstall nowait skipifsilent
