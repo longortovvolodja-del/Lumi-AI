@@ -32,10 +32,27 @@ jobs:
       - name: Run tests
         run: python -m pytest
 
+      - name: Prepare Lumi application icon
+        shell: pwsh
+        run: |
+          python -m pip install Pillow
+          @'
+          from pathlib import Path
+          from PIL import Image
+
+          output = Path("dist")
+          output.mkdir(exist_ok=True)
+          icon = Image.open("assets/lumi-app-icon.png").convert("RGBA")
+          icon.save(output / "lumi.ico", format="ICO", sizes=[(16,16),(24,24),(32,32),(48,48),(64,64),(128,128),(256,256)])
+          '@ | Set-Content -Encoding utf8 prepare_icon.py
+          python prepare_icon.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Remove-Item prepare_icon.py
+
       - name: Build Windows application
         run: >
           pyinstaller --noconfirm --clean --windowed --name Lumi
-          --icon assets/lumi.ico
+          --icon dist/lumi.ico
           --add-data "assets;assets"
           --paths src src/lumi/__main__.py
 
@@ -46,6 +63,31 @@ jobs:
           name: Lumi-Windows
           path: dist/Lumi/
           if-no-files-found: error
+
+      - name: Prepare Lumi installer artwork
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        run: |
+          @'
+          from pathlib import Path
+          from PIL import Image, ImageOps
+
+          output = Path("dist")
+          navy = (8, 13, 37)
+          source = Image.open("assets/Lumi AI_ Неоновый помощник-лисёнок.png").convert("RGB")
+          wizard = Image.new("RGB", (164, 314), navy)
+          artwork = ImageOps.contain(source, (156, 306), method=Image.Resampling.LANCZOS)
+          wizard.paste(artwork, ((164-artwork.width)//2, (314-artwork.height)//2))
+          wizard.save(output / "installer-wizard.bmp")
+          icon = Image.open("assets/lumi-app-icon.png").convert("RGB")
+          small = Image.new("RGB", (55, 55), navy)
+          avatar = ImageOps.contain(icon, (51, 51), method=Image.Resampling.LANCZOS)
+          small.paste(avatar, ((55-avatar.width)//2, (55-avatar.height)//2))
+          small.save(output / "installer-small.bmp")
+          '@ | Set-Content -Encoding utf8 prepare_installer_art.py
+          python prepare_installer_art.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Remove-Item prepare_installer_art.py
 
       - name: Install Inno Setup
         if: startsWith(github.ref, 'refs/tags/v')
