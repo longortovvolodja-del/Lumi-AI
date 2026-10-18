@@ -139,13 +139,13 @@ jobs:
           pyinstaller --noconfirm --clean --onefile --windowed --name LumiSetupBootstrap --icon dist/lumi.ico --add-data "dist/payload/Lumi-Internal-Setup.exe;payload" --add-data "dist/installer-version.txt;payload" --add-data "assets;assets" --distpath dist/bootstrap --workpath build/bootstrap src/lumi/installer_app.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $version = (Get-Content dist/installer-version.txt -Raw).Trim()
-          Copy-Item "dist/bootstrap/LumiSetupBootstrap.exe" "dist/Lumi-Setup-$version.exe"
+          Copy-Item "dist/bootstrap/LumiSetupBootstrap.exe" "dist/Lumi-Setup-$version-beta.exe"
 
       - name: Generate installer checksum
         shell: pwsh
         run: |
           $version = "${{ inputs.version }}"
-          $installer = Get-Item "dist/Lumi-Setup-$version.exe"
+          $installer = Get-Item "dist/Lumi-Setup-$version-beta.exe"
           $hash = (Get-FileHash $installer.FullName -Algorithm SHA256).Hash.ToLower()
           "$hash  $($installer.Name)" | Out-File -Encoding ascii dist/SHA256SUMS.txt
 
@@ -164,5 +164,5 @@ jobs:
 
             Версия приложения и имя установщика не содержат суффикс Beta. Бета-статус указан здесь, на странице релиза.
           files: |
-            dist/Lumi-Setup-*.exe
+            dist/Lumi-Setup-*-beta.exe
             dist/SHA256SUMS.txt
