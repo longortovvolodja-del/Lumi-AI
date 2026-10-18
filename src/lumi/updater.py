@@ -168,7 +168,7 @@ def update_mode() -> int:
         if latest_version and version_file.is_file():
             installed_version = version_file.read_text(encoding="utf-8").strip()
             def version_key(value: str) -> tuple[int, ...]:
-                numbers = re.findall(r"\\d+", value)
+                numbers = re.findall(r"\d+", value)
                 return tuple(int(number) for number in numbers) or (0,)
             if installed_version and version_key(installed_version) >= version_key(latest_version):
                 messagebox.showinfo(
