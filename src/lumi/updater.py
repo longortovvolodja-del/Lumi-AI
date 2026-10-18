@@ -193,11 +193,20 @@ def update_mode() -> int:
             persistent_installer = Path(tempfile.gettempdir()) / installer_name
             persistent_installer.write_bytes(installer_path.read_bytes())
         root.destroy()
-        subprocess.Popen([
+        result = subprocess.run([
             str(persistent_installer),
             "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-",
-        ], close_fds=True)
-        return 0
+        ], check=False)
+        try:
+            persistent_installer.unlink(missing_ok=True)
+        except OSError:
+            pass
+        if result.returncode == 0:
+            app_exe = install_dir / "Lumi.exe"
+            if app_exe.is_file():
+                subprocess.Popen([str(app_exe)], cwd=str(install_dir))
+            return 0
+        return result.returncode
     except urllib.error.HTTPError as exc:
         message = (
             "Пока нет опубликованного релиза Lumi AI.\n"
