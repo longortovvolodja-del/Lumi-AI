@@ -56,6 +56,12 @@ jobs:
           --add-data "assets;assets"
           --paths src src/lumi/__main__.py
 
+      - name: Write installed version marker
+        shell: pwsh
+        run: |
+          $version = python -c "import re; print(re.search(r'__version__ = \"([^\"]+)\"', open('src/lumi/__init__.py', encoding='utf-8').read()).group(1))"
+          Set-Content -Path "dist/Lumi/version.txt" -Value $version -Encoding ascii
+
       - name: Build Lumi updater
         run: >
           pyinstaller --noconfirm --clean --onefile --windowed --name LumiUpdater
