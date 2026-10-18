@@ -1,10 +1,11 @@
-"""Initial Lumi desktop app: local notes and a model-manager placeholder."""
+"""Lumi desktop app: local notes and a model-manager placeholder."""
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QAction, QFont
+from PySide6.QtGui import QAction, QFont, QIcon
 from PySide6.QtWidgets import (
     QApplication,
     QHBoxLayout,
@@ -22,6 +23,12 @@ from PySide6.QtWidgets import (
 
 from lumi import __version__
 from lumi.storage import NotesStore
+
+
+def resource_path(relative_path: str) -> Path:
+    """Resolve bundled assets in source runs and PyInstaller builds."""
+    bundle_root = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parents[2]))
+    return bundle_root / relative_path
 
 
 STYLE = """
@@ -57,6 +64,7 @@ class LumiWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("Lumi — твоя умная помощница")
+        self.setWindowIcon(QIcon(str(resource_path("assets/lumi-app-icon.png"))))
         self.resize(1000, 650)
         self.store = NotesStore()
         self.current_note_id: int | None = None
@@ -214,6 +222,7 @@ def main() -> None:
     app = QApplication(sys.argv)
     app.setApplicationName("Lumi")
     app.setOrganizationName("Lumi")
+    app.setWindowIcon(QIcon(str(resource_path("assets/lumi-app-icon.png"))))
     app.setStyle("Fusion")
     app.setFont(QFont("Segoe UI", 10))
     app.setStyleSheet(STYLE)

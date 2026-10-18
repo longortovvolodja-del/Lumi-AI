@@ -34,6 +34,7 @@ jobs:
       - name: Build Windows executable
         run: >
           pyinstaller --noconfirm --clean --windowed --name Lumi
+          --add-data "assets;assets"
           --paths src src/lumi/__main__.py
 
       - name: Upload executable artifact
