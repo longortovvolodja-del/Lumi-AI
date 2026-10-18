@@ -10,6 +10,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -162,6 +163,21 @@ def update_mode() -> int:
 
     try:
         release = json.loads(_http(LATEST_API).decode("utf-8"))
+        latest_version = str(release.get("tag_name", "")).lstrip("v")
+        version_file = install_dir / "version.txt"
+        if latest_version and version_file.is_file():
+            installed_version = version_file.read_text(encoding="utf-8").strip()
+            def version_key(value: str) -> tuple[int, ...]:
+                numbers = re.findall(r"\\d+", value)
+                return tuple(int(number) for number in numbers) or (0,)
+            if installed_version and version_key(installed_version) >= version_key(latest_version):
+                messagebox.showinfo(
+                    APP_NAME,
+                    f"У тебя уже установлена актуальная версия Lumi AI {installed_version}.",
+                    parent=root,
+                )
+                root.destroy()
+                return 0
         assets = release.get("assets", [])
         installer_asset = next((a for a in assets if a.get("name", "").startswith("Lumi-Setup-") and a.get("name", "").endswith(".exe")), None)
         checksum_asset = next((a for a in assets if a.get("name") == "SHA256SUMS.txt"), None)
