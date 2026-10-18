@@ -109,7 +109,7 @@ class LumiWindow(QMainWindow):
         self.model_button.clicked.connect(self._show_models_info)
         header.addWidget(self.model_button)
         self.update_button = QPushButton("Проверить обновления")
-        self.update_button.setIcon(QIcon(str(resource_path("assets/update-icon.png"))))
+        self.update_button.setIcon(QIcon(str(resource_path("assets/settings-icon.png"))))
         self.update_button.clicked.connect(self._start_updater)
         header.addWidget(self.update_button)
         outer.addLayout(header)
