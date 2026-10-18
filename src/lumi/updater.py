@@ -117,31 +117,33 @@ def uninstall_mode() -> int:
         return 2
     executable = command[0].strip('"')
     args = command[1:]
-    if not any(arg.lower().startswith("/uninstall") for arg in args):
-        args.append("/UNINSTALL")
-    try:
-        subprocess.Popen([executable, *args])
-    except OSError as exc:
-        messagebox.showerror(APP_NAME, f"Не удалось запустить деинсталлятор:\n{exc}", parent=root)
-        root.destroy()
-        return 2
-
     data_dir = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "Lumi" / "data"
+    delete_data = False
     if data_dir.exists():
         delete_data = messagebox.askyesno(
             "Удалить заметки и данные?",
-            f"Удалить также локальные данные Lumi, включая заметки?\n\n{data_dir}\n\n"
-            "Это действие нельзя отменить. Если сомневаешься, нажми «Нет».",
+            f"Удалить также локальные данные Lumi, включая заметки?\\n\\n{data_dir}\\n\\n"
+            "Это действие нельзя отменить. Нажми «Нет», чтобы сохранить заметки.",
             icon="warning",
             parent=root,
         )
-        if delete_data:
-            messagebox.showinfo(
-                APP_NAME,
-                "После завершения удаления программы закройте это окно и удалите папку данных вручную, "
-                "если она осталась:\n" + str(data_dir),
-                parent=root,
-            )
+    try:
+        subprocess.run([executable, *args, "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"], check=True)
+    except (OSError, subprocess.CalledProcessError) as exc:
+        messagebox.showerror(APP_NAME, f"Не удалось завершить удаление программы:\\n{exc}", parent=root)
+        root.destroy()
+        return 2
+
+    if delete_data and data_dir.exists():
+        import shutil
+        try:
+            shutil.rmtree(data_dir)
+        except OSError as exc:
+            messagebox.showwarning(APP_NAME, f"Программа удалена, но папку данных не удалось удалить:\\n{data_dir}\\n{exc}", parent=root)
+        else:
+            messagebox.showinfo(APP_NAME, "Lumi AI и её пользовательские данные удалены.", parent=root)
+    else:
+        messagebox.showinfo(APP_NAME, "Lumi AI удалена. Пользовательские заметки сохранены.", parent=root)
     root.destroy()
     return 0
 
