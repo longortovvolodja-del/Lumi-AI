@@ -71,7 +71,7 @@ jobs:
 
           source = Path("src/lumi/__init__.py").read_text(encoding="utf-8")
           version = re.search(r'__version__ = "([^"]+)"', source).group(1)
-          Path("dist/Lumi/version.txt").write_text(version + "\\n", encoding="ascii")
+          Path("dist/Lumi/version.txt").write_text(version + "\n", encoding="ascii")
           '@ | Set-Content -Encoding utf8 write_version.py
           python write_version.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -128,7 +128,7 @@ jobs:
           } else {
             $version = "${{ inputs.version }}"
           }
-          $iscc = "${env:ProgramFiles(x86)}\\Inno Setup 6\\ISCC.exe"
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
           if (-not (Test-Path $iscc)) { throw "Inno Setup compiler not found: $iscc" }
           & $iscc "/DAppVersion=$version" installer/lumi.iss
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
