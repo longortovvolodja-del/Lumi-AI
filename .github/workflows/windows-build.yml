@@ -9,9 +9,9 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Версия установщика, например 0.1.0"
+        description: "Версия установщика, например 0.1.1"
         required: true
-        default: "0.1.0"
+        default: "0.1.1"
         type: string
 
 permissions:
@@ -128,7 +128,7 @@ jobs:
           } else {
             $version = "${{ inputs.version }}"
           }
-          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          $iscc = "${env:ProgramFiles(x86)}\\Inno Setup 6\\ISCC.exe"
           if (-not (Test-Path $iscc)) { throw "Inno Setup compiler not found: $iscc" }
           & $iscc "/DAppVersion=$version" installer/lumi.iss
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
