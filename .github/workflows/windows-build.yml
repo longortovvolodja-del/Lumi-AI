@@ -136,6 +136,7 @@ jobs:
         run: |
           pyinstaller --noconfirm --clean --onefile --windowed --name LumiSetupBootstrap --icon dist/lumi.ico --add-data "dist/payload/Lumi-Internal-Setup.exe;payload" --add-data "dist/installer-version.txt;payload" --add-data "assets;assets" --distpath dist/bootstrap --workpath build/bootstrap src/lumi/installer_app.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $version = (Get-Content dist/installer-version.txt -Raw).Trim()
           Copy-Item "dist/bootstrap/LumiSetupBootstrap.exe" "dist/Lumi-Setup-$version.exe"
 
       - name: Generate installer checksum
