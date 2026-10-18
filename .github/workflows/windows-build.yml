@@ -3,6 +3,7 @@ name: Windows build
 on:
   push:
     branches: [main]
+    tags: ["v*"]
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -31,15 +32,37 @@ jobs:
       - name: Run tests
         run: python -m pytest
 
-      - name: Build Windows executable
+      - name: Build Windows application
         run: >
           pyinstaller --noconfirm --clean --windowed --name Lumi
+          --icon assets/lumi.ico
           --add-data "assets;assets"
           --paths src src/lumi/__main__.py
 
-      - name: Upload executable artifact
+      - name: Upload application artifact
+        if: startsWith(github.ref, 'refs/heads/') || github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@v4
         with:
           name: Lumi-Windows
           path: dist/Lumi/
           if-no-files-found: error
+
+      - name: Install Inno Setup
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: choco install innosetup --yes --no-progress
+
+      - name: Build Windows installer
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        run: |
+          $version = $env:GITHUB_REF_NAME.Substring(1)
+          & "$env:ProgramFiles(x86)\Inno Setup 6\ISCC.exe" "/DAppVersion=$version" installer/lumi.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Lumi AI ${{ github.ref_name }}
+          generate_release_notes: true
+          files: dist/Lumi-Setup-*.exe
