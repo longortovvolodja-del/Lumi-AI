@@ -68,17 +68,8 @@ jobs:
       - name: Write installed version marker
         shell: pwsh
         run: |
-          @'
-          from pathlib import Path
-          import re
-
-          source = Path("src/lumi/__init__.py").read_text(encoding="utf-8")
-          version = re.search(r'__version__ = "([^"]+)"', source).group(1)
-          Path("dist/Lumi/version.txt").write_text(version + "\n", encoding="ascii")
-          '@ | Set-Content -Encoding utf8 write_version.py
-          python write_version.py
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          Remove-Item write_version.py
+          $version = "${{ inputs.version }}"
+          Set-Content -Path dist/Lumi/version.txt -Value $version -Encoding ascii
 
       - name: Build Lumi updater
         run: >
@@ -162,7 +153,7 @@ jobs:
 
             Эта сборка предназначена для тестирования новых функций Lumi AI. Возможны ошибки, сбои и потеря несохранённых данных. Если нужна максимально стабильная версия, скачайте обычный стабильный релиз.
 
-            Версия приложения и имя установщика не содержат суффикс Beta. Бета-статус указан здесь, на странице релиза.
+            Имя установщика: Lumi-Setup-${{ inputs.version }}-beta.exe. Бета-статус также указан на странице релиза.
           files: |
             dist/Lumi-Setup-*-beta.exe
             dist/SHA256SUMS.txt
