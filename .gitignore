@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.env
+
+# Build output
+build/
+dist/
+*.spec
+
+# Local user data and model files
+data/
+models/
+*.db
+*.sqlite
+*.sqlite3
+*.gguf
+
+# Logs and caches
+logs/
+*.log
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Editors and operating system
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
