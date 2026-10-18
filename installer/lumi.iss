@@ -38,7 +38,7 @@ Name: "desktopicon"; Description: "Создать ярлык на рабочем
 
 [Files]
 Source: "..\dist\Lumi\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
-Source: "..\\dist\\LumiUpdater.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\dist\LumiUpdater.exe"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\Lumi AI"; Filename: "{app}\Lumi.exe"
