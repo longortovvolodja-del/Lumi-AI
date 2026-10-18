@@ -2,10 +2,11 @@
 from __future__ import annotations
 
 import sys
+import subprocess
 from pathlib import Path
 
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QAction, QFont, QIcon
+from PySide6.QtCore import Qt, QSize
+from PySide6.QtGui import QAction, QFont, QIcon, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QHBoxLayout,
@@ -54,6 +55,11 @@ QPushButton {
 QPushButton:hover { background: #443AA0; }
 QPushButton:pressed { background: #24205C; }
 QLabel#brand { color: #78F3FF; font-size: 19pt; font-weight: 700; }
+QLabel#subtitle { color: #C0C8FF; font-size: 10pt; }
+QLabel#section { color: #78F3FF; font-size: 11pt; font-weight: 600; }
+QPushButton { min-height: 20px; }
+QPushButton:disabled { color: #7E86B8; background: #171D40; border-color: #28305C; }
+QLineEdit:focus, QTextEdit:focus, QListWidget:focus { border: 1px solid #78F3FF; }
 QLabel#muted { color: #A7B6F4; }
 QListWidget::item { padding: 8px; border-radius: 6px; }
 QListWidget::item:selected { background: #302B75; }
@@ -78,32 +84,54 @@ class LumiWindow(QMainWindow):
         outer.setSpacing(12)
 
         header = QHBoxLayout()
-        brand = QLabel("✦ Lumi")
+        logo = QLabel()
+        logo.setFixedSize(52, 52)
+        logo.setPixmap(
+            QPixmap(str(resource_path("assets/lumi-app-icon.png"))).scaled(
+                48, 48, Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+        )
+        header.addWidget(logo)
+
+        brand_column = QVBoxLayout()
+        brand = QLabel("Lumi AI")
         brand.setObjectName("brand")
         subtitle = QLabel("Твоя умная помощница")
-        subtitle.setObjectName("muted")
-        header.addWidget(brand)
-        header.addWidget(subtitle)
+        subtitle.setObjectName("subtitle")
+        brand_column.addWidget(brand)
+        brand_column.addWidget(subtitle)
+        header.addLayout(brand_column)
         header.addStretch()
         self.model_button = QPushButton("Модели ИИ")
+        self.model_button.setIcon(QIcon(str(resource_path("assets/ai-icon.png"))))
+        self.model_button.setIconSize(QSize(22, 22))
         self.model_button.clicked.connect(self._show_models_info)
         header.addWidget(self.model_button)
+        self.update_button = QPushButton("Проверить обновления")
+        self.update_button.setIcon(QIcon(str(resource_path("assets/settings-icon.png"))))
+        self.update_button.clicked.connect(self._start_updater)
+        header.addWidget(self.update_button)
         outer.addLayout(header)
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
         sidebar = QWidget()
         side_layout = QVBoxLayout(sidebar)
+        search_label = QLabel("Заметки")
+        search_label.setObjectName("section")
+        side_layout.addWidget(search_label)
         self.search = QLineEdit()
-        self.search.setPlaceholderText("Найти заметку…")
+        self.search.setPlaceholderText("⌕  Найти заметку…")
         self.search.textChanged.connect(self._reload_notes)
         side_layout.addWidget(self.search)
         self.notes_list = QListWidget()
         self.notes_list.currentRowChanged.connect(self._select_note)
         side_layout.addWidget(self.notes_list)
         buttons = QHBoxLayout()
-        new_button = QPushButton("＋ Новая")
+        new_button = QPushButton("＋ Новая заметка")
+        new_button.setIcon(QIcon(str(resource_path("assets/lumi-app-icon.png"))))
         new_button.clicked.connect(self._new_note)
-        delete_button = QPushButton("Удалить")
+        delete_button = QPushButton("⌫ Удалить")
         delete_button.clicked.connect(self._delete_note)
         buttons.addWidget(new_button)
         buttons.addWidget(delete_button)
@@ -111,6 +139,9 @@ class LumiWindow(QMainWindow):
 
         editor = QWidget()
         edit_layout = QVBoxLayout(editor)
+        editor_heading = QLabel("Редактор заметки")
+        editor_heading.setObjectName("section")
+        edit_layout.addWidget(editor_heading)
         self.title_edit = QLineEdit()
         self.title_edit.setPlaceholderText("Название заметки")
         self.body_edit = QTextEdit()
@@ -120,7 +151,7 @@ class LumiWindow(QMainWindow):
         save_row = QHBoxLayout()
         self.status = QLabel("Заметки сохраняются на этом компьютере.")
         self.status.setObjectName("muted")
-        save_button = QPushButton("Сохранить заметку")
+        save_button = QPushButton("✓  Сохранить заметку")
         save_button.clicked.connect(self._save_note)
         save_row.addWidget(self.status, 1)
         save_row.addWidget(save_button)
@@ -140,6 +171,9 @@ class LumiWindow(QMainWindow):
         about = QAction("О Lumi", self)
         about.triggered.connect(self._show_about)
         self.menuBar().addAction(about)
+        check_updates = QAction("Проверить обновления", self)
+        check_updates.triggered.connect(self._start_updater)
+        self.menuBar().addAction(check_updates)
 
     def _reload_notes(self, *_: object) -> None:
         selected_id = self.current_note_id
@@ -198,6 +232,29 @@ class LumiWindow(QMainWindow):
             self.store.delete_note(self.current_note_id)
             self.current_note_id = None
             self._reload_notes()
+
+    def _start_updater(self) -> None:
+        updater = Path(sys.executable).resolve().parent / "LumiUpdater.exe"
+        if not updater.is_file():
+            QMessageBox.warning(
+                self,
+                "Обновление Lumi AI",
+                "Обновлятор ещё не включён в эту сборку. Скачай последнюю сборку после завершения настройки обновлений.",
+            )
+            return
+        answer = QMessageBox.question(
+            self,
+            "Проверить обновления",
+            "Lumi проверит наличие новой версии. Приложение закроется на время установки. Продолжить?",
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            subprocess.Popen([str(updater), "--update"], cwd=str(updater.parent))
+        except OSError as exc:
+            QMessageBox.critical(self, "Обновление Lumi AI", f"Не удалось запустить обновлятор:\\n{exc}")
+            return
+        QApplication.quit()
 
     def _show_models_info(self) -> None:
         QMessageBox.information(

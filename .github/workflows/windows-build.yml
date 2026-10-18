@@ -3,12 +3,19 @@ name: Windows build
 on:
   push:
     branches: [main]
+    tags: ["v*"]
   pull_request:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      version:
+        description: "Версия установщика, например 0.1.0"
+        required: true
+        default: "0.1.0"
+        type: string
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   test-and-build:
@@ -31,15 +38,117 @@ jobs:
       - name: Run tests
         run: python -m pytest
 
-      - name: Build Windows executable
+      - name: Prepare Lumi application icon
+        shell: pwsh
+        run: |
+          python -m pip install Pillow
+          @'
+          from pathlib import Path
+          from PIL import Image
+
+          output = Path("dist")
+          output.mkdir(exist_ok=True)
+          icon = Image.open("assets/lumi-app-icon.png").convert("RGBA")
+          icon.save(output / "lumi.ico", format="ICO", sizes=[(16,16),(24,24),(32,32),(48,48),(64,64),(128,128),(256,256)])
+          '@ | Set-Content -Encoding utf8 prepare_icon.py
+          python prepare_icon.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Remove-Item prepare_icon.py
+
+      - name: Build Windows application
         run: >
           pyinstaller --noconfirm --clean --windowed --name Lumi
+          --icon dist/lumi.ico
           --add-data "assets;assets"
           --paths src src/lumi/__main__.py
 
-      - name: Upload executable artifact
+      - name: Write installed version marker
+        shell: pwsh
+        run: |
+          @'
+          from pathlib import Path
+          import re
+
+          source = Path("src/lumi/__init__.py").read_text(encoding="utf-8")
+          version = re.search(r'__version__ = "([^"]+)"', source).group(1)
+          Path("dist/Lumi/version.txt").write_text(version + "\\n", encoding="ascii")
+          '@ | Set-Content -Encoding utf8 write_version.py
+          python write_version.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Remove-Item write_version.py
+
+      - name: Build Lumi updater
+        run: >
+          pyinstaller --noconfirm --clean --onefile --windowed --name LumiUpdater
+          --paths src src/lumi/updater.py
+
+      - name: Upload application artifact
+        if: startsWith(github.ref, 'refs/heads/') || github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@v4
         with:
           name: Lumi-Windows
           path: dist/Lumi/
           if-no-files-found: error
+
+      - name: Prepare Lumi installer artwork
+        if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+        shell: pwsh
+        run: |
+          @'
+          from pathlib import Path
+          from PIL import Image, ImageOps
+
+          output = Path("dist")
+          navy = (8, 13, 37)
+          source = Image.open("assets/Lumi AI_ Неоновый помощник-лисёнок.png").convert("RGB")
+          wizard = Image.new("RGB", (164, 314), navy)
+          artwork = ImageOps.contain(source, (156, 306), method=Image.Resampling.LANCZOS)
+          wizard.paste(artwork, ((164-artwork.width)//2, (314-artwork.height)//2))
+          wizard.save(output / "installer-wizard.bmp")
+          icon = Image.open("assets/lumi-app-icon.png").convert("RGB")
+          small = Image.new("RGB", (55, 55), navy)
+          avatar = ImageOps.contain(icon, (51, 51), method=Image.Resampling.LANCZOS)
+          small.paste(avatar, ((55-avatar.width)//2, (55-avatar.height)//2))
+          small.save(output / "installer-small.bmp")
+          '@ | Set-Content -Encoding utf8 prepare_installer_art.py
+          python prepare_installer_art.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Remove-Item prepare_installer_art.py
+
+      - name: Install Inno Setup
+        if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+        run: choco install innosetup --yes --no-progress
+
+      - name: Build Windows installer
+        if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REF -like "refs/tags/v*") {
+            $version = $env:GITHUB_REF_NAME.Substring(1)
+          } else {
+            $version = "${{ inputs.version }}"
+          }
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { throw "Inno Setup compiler not found: $iscc" }
+          & $iscc "/DAppVersion=$version" installer/lumi.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Generate installer checksum
+        if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+        shell: pwsh
+        run: |
+          $installer = Get-Item "dist/Lumi-Setup-*.exe"
+          $hash = (Get-FileHash $installer.FullName -Algorithm SHA256).Hash.ToLower()
+          "$hash  $($installer.Name)" | Out-File -Encoding ascii dist/SHA256SUMS.txt
+
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || format('v{0}', inputs.version) }}
+          name: Lumi AI ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || format('v{0}', inputs.version) }}
+          target_commitish: main
+          generate_release_notes: true
+          files: |
+            dist/Lumi-Setup-*.exe
+            dist/SHA256SUMS.txt
