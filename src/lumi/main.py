@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import sys
+import subprocess
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QSize
@@ -107,6 +108,10 @@ class LumiWindow(QMainWindow):
         self.model_button.setIconSize(QSize(22, 22))
         self.model_button.clicked.connect(self._show_models_info)
         header.addWidget(self.model_button)
+        self.update_button = QPushButton("Проверить обновления")
+        self.update_button.setIcon(QIcon(str(resource_path("assets/update-icon.png"))))
+        self.update_button.clicked.connect(self._start_updater)
+        header.addWidget(self.update_button)
         outer.addLayout(header)
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -166,6 +171,9 @@ class LumiWindow(QMainWindow):
         about = QAction("О Lumi", self)
         about.triggered.connect(self._show_about)
         self.menuBar().addAction(about)
+        check_updates = QAction("Проверить обновления", self)
+        check_updates.triggered.connect(self._start_updater)
+        self.menuBar().addAction(check_updates)
 
     def _reload_notes(self, *_: object) -> None:
         selected_id = self.current_note_id
@@ -224,6 +232,29 @@ class LumiWindow(QMainWindow):
             self.store.delete_note(self.current_note_id)
             self.current_note_id = None
             self._reload_notes()
+
+    def _start_updater(self) -> None:
+        updater = Path(sys.executable).resolve().parent / "LumiUpdater.exe"
+        if not updater.is_file():
+            QMessageBox.warning(
+                self,
+                "Обновление Lumi AI",
+                "Обновлятор ещё не включён в эту сборку. Скачай последнюю сборку после завершения настройки обновлений.",
+            )
+            return
+        answer = QMessageBox.question(
+            self,
+            "Проверить обновления",
+            "Lumi проверит наличие новой версии. Приложение закроется на время установки. Продолжить?",
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            subprocess.Popen([str(updater), "--update"], cwd=str(updater.parent))
+        except OSError as exc:
+            QMessageBox.critical(self, "Обновление Lumi AI", f"Не удалось запустить обновлятор:\\n{exc}")
+            return
+        QApplication.quit()
 
     def _show_models_info(self) -> None:
         QMessageBox.information(
