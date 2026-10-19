@@ -9,9 +9,14 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Версия установщика, например 0.1.1"
+        description: "Версия установщика, например 0.1.8"
         required: true
-        default: "0.1.1"
+        default: "0.1.8"
+        type: string
+      changes:
+        description: "Что добавлено или исправлено в этом выпуске"
+        required: true
+        default: "Обновление Lumi AI."
         type: string
 
 permissions:
@@ -154,7 +159,11 @@ jobs:
           tag_name: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || format('v{0}', inputs.version) }}
           name: Lumi AI ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || format('v{0}', inputs.version) }}
           target_commitish: main
-          generate_release_notes: true
+          generate_release_notes: false
+          body: |
+            ## Что добавлено или исправлено
+
+            ${{ inputs.changes }}
           files: |
             dist/Lumi-Setup-*.exe
             dist/SHA256SUMS.txt
