@@ -129,8 +129,13 @@ class LumiWindow(QMainWindow):
         self.brand_text_widget = QWidget()
         brand_text = QVBoxLayout(self.brand_text_widget)
         brand_text.setContentsMargins(0, 0, 0, 0)
-        brand = QLabel("Lumi AI")
+        brand = QLabel()
         brand.setObjectName("brand")
+        brand.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        brand.setPixmap(QPixmap(str(resource_path("assets/lumi-ai-logo.png"))).scaled(
+            130, 42, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
+        ))
+        brand.setToolTip("Lumi AI")
         subtitle = QLabel("Твоя умная помощница")
         subtitle.setObjectName("subtitle")
         subtitle.setWordWrap(True)
