@@ -60,7 +60,7 @@ jobs:
           pyinstaller --noconfirm --clean --windowed --name Lumi
           --icon dist/lumi.ico
           --add-data "assets;assets"
-          --paths src src/lumi/__main__.py
+          --paths src --hidden-import lumi.main --hidden-import lumi.storage src/lumi/__main__.py
 
       - name: Write installed version marker
         shell: pwsh

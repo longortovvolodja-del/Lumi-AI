@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Версия бета-сборки без суффикса, например 0.1.3"
+        description: "Версия бета-сборки без суффикса, например 0.1.7"
         required: true
-        default: "0.1.3"
+        default: "0.1.7"
         type: string
 
 permissions:
@@ -24,7 +24,7 @@ jobs:
         run: |
           $version = "${{ inputs.version }}"
           if ($version -notmatch '^\d+\.\d+\.\d+$') {
-            throw "Укажи версию в формате X.Y.Z, например 0.1.3 — без beta и без буквы v."
+            throw "Укажи версию в формате X.Y.Z, например 0.1.7 — без beta и без буквы v."
           }
 
       - name: Set up Python
@@ -63,7 +63,7 @@ jobs:
           pyinstaller --noconfirm --clean --windowed --name Lumi
           --icon dist/lumi.ico
           --add-data "assets;assets"
-          --paths src src/lumi/__main__.py
+          --paths src --hidden-import lumi.main --hidden-import lumi.storage src/lumi/__main__.py
 
       - name: Write installed version marker
         shell: pwsh
