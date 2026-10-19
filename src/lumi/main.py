@@ -28,7 +28,7 @@ QMainWindow, QWidget {
     background: #0A0C16; color: #F2F4FF;
     font-family: Segoe UI, sans-serif; font-size: 10pt;
 }
-QWidget#navPanel { background: #0E1120; border-right: 1px solid #20263B; }
+QWidget#navPanel { background: #020D30; border-right: 1px solid #20263B; }
 QWidget#contentPanel { background: #0A0C16; }
 QLabel#brand { color: #7CEEFF; font-size: 18pt; font-weight: 700; }
 QLabel#subtitle { color: #8D97B8; font-size: 9pt; }
@@ -49,12 +49,12 @@ QPushButton:hover { background: #202E49; border-color: #3BBDD2; }
 QPushButton:pressed { background: #151D30; }
 QPushButton:disabled { color: #69738F; background: #111626; border-color: #20283A; }
 QPushButton#navButton {
-    text-align: left; background: transparent; border: 1px solid transparent;
+    text-align: left; background: #01071B; border: 1px solid transparent;
     color: #A9B2CC; padding: 11px 12px; min-height: 24px;
 }
-QPushButton#navButton:hover { background: #171D30; color: #E8F9FF; }
+QPushButton#navButton:hover { background: #101B38; color: #E8F9FF; }
 QPushButton#navButton:checked {
-    background: #15263A; border: 1px solid #24546A; color: #83F0FF;
+    background: #13234A; border: 1px solid #24546A; color: #83F0FF;
 }
 QPushButton#primaryButton {
     background: #173B50; border: 1px solid #267C98; color: #D9FAFF;
