@@ -33,7 +33,7 @@ def version_text() -> str:
     try:
         return path.read_text(encoding="utf-8").strip()
     except OSError:
-        return "0.1.1"
+        return "0.1.7"
 
 
 class InstallerWindow(QMainWindow):
