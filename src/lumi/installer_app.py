@@ -227,7 +227,7 @@ class InstallerWindow(QMainWindow):
         self.agreement_next.setObjectName("primary")
         self.agreement_next.setEnabled(False)
         self.agreement_checkbox.toggled.connect(self.agreement_next.setEnabled)
-        self.agreement_next.clicked.connect(lambda: self.go_to_step(3))
+        self.agreement_next.clicked.connect(self.begin_install)
         buttons.addWidget(self.agreement_next)
         layout.addLayout(buttons)
         return page
