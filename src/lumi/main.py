@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QSize
-from PySide6.QtGui import QAction, QFont, QIcon, QPixmap
+from PySide6.QtGui import QAction, QFont, QIcon, QPixmap, QTextCursor
 from PySide6.QtWidgets import (
     QApplication, QComboBox, QFileDialog, QFrame, QHBoxLayout, QLabel,
     QLineEdit, QListWidget, QMainWindow, QMessageBox, QPushButton,
@@ -28,7 +28,7 @@ QMainWindow, QWidget {
     background: #0A0C16; color: #F2F4FF;
     font-family: Segoe UI, sans-serif; font-size: 10pt;
 }
-QWidget#navPanel { background: #0E1120; border-right: 1px solid #20263B; }
+QWidget#navPanel { background: #020D30; border-right: 1px solid #20263B; }
 QWidget#contentPanel { background: #0A0C16; }
 QLabel#brand { color: #7CEEFF; font-size: 18pt; font-weight: 700; }
 QLabel#subtitle { color: #8D97B8; font-size: 9pt; }
@@ -191,7 +191,7 @@ class LumiWindow(QMainWindow):
         layout.addWidget(button)
         self.nav_buttons[key] = button
 
-    def _page_heading(self, title: str, subtitle: str) -> QVBoxLayout:
+    def _toggle_sidebar(self) -> None:\n        self._set_sidebar_collapsed(not self.sidebar_collapsed)\n\n    def _expand_sidebar(self) -> None:\n        if self.sidebar_collapsed:\n            self._set_sidebar_collapsed(False)\n\n    def _set_sidebar_collapsed(self, collapsed: bool) -> None:\n        self.sidebar_collapsed = collapsed\n        self.nav_panel.setFixedWidth(68 if collapsed else 248)\n        nav_layout = self.nav_panel.layout()\n        nav_layout.setContentsMargins(7 if collapsed else 14, 14 if collapsed else 20, 7 if collapsed else 14, 12 if collapsed else 16)\n        nav_layout.setSpacing(7)\n        self.brand_text_widget.setVisible(not collapsed)\n        self.sidebar_toggle.setVisible(not collapsed)\n        self.nav_caption.setVisible(not collapsed)\n        self.status_card.setVisible(not collapsed)\n        self.brand_logo_button.setToolTip("Развернуть боковую панель" if collapsed else "Lumi AI")\n        self.sidebar_toggle.setText("‹" if not collapsed else "›")\n        for key, button in self.nav_buttons.items():\n            label = button.property("navLabel")\n            button.setText("" if collapsed else str(label))\n            button.setToolTip(str(label) if collapsed else "")\n            button.setStyleSheet("text-align: center; padding: 10px 4px;" if collapsed else "")\n\n    def _page_heading(self, title: str, subtitle: str) -> QVBoxLayout:
         layout = QVBoxLayout()
         heading = QLabel(title)
         heading.setObjectName("pageTitle")
