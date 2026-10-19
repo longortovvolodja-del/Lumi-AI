@@ -34,7 +34,13 @@ jobs:
         run: |
           $version = "${{ inputs.version }}"
           $betaNumber = "${{ inputs.beta_number }}"
-          if ($version -notmatch '^\\d+\\.\\d+\\.\\d+
+          if ($version -notmatch '^\d+\.\d+\.\d+$') {
+            throw "Укажи основную версию в формате X.Y.Z, например 0.1.8."
+          }
+          if ($betaNumber -notmatch '^\d{1,5}$') {
+            throw "Номер бета-сборки должен содержать от 1 до 5 цифр."
+          }
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -307,7 +313,7 @@ jobs:
 
             Установщик: `Lumi-Setup-${{ inputs.version }}-beta.${{ inputs.beta_number }}.exe`.
           files: |
-            dist/Lumi-Setup-*-beta.exe
+            dist/Lumi-Setup-*-beta.*.exe
             dist/SHA256SUMS.txt
 ) {
             throw "Номер бета-сборки должен содержать от 1 до 5 цифр."
