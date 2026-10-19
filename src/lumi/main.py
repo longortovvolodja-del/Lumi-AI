@@ -210,7 +210,7 @@ class LumiWindow(QMainWindow):
         layout.addWidget(button)
         self.nav_buttons[key] = button
 
-    def _toggle_sidebar(self) -> None:\n        self._set_sidebar_collapsed(not self.sidebar_collapsed)\n\n    def _expand_sidebar(self) -> None:\n        if self.sidebar_collapsed:\n            self._set_sidebar_collapsed(False)\n\n    def _toggle_sidebar(self) -> None:
+    def _toggle_sidebar(self) -> None:
         self._set_sidebar_collapsed(not self.sidebar_collapsed)
 
     def _expand_sidebar(self) -> None:
