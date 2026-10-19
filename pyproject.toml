@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "lumi-ai"
-version = "0.1.1"
+version = "0.1.7"
 description = "Lumi — a friendly local AI companion for Windows"
 readme = "README.md"
 requires-python = ">=3.11"
