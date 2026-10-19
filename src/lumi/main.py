@@ -8,9 +8,9 @@ from pathlib import Path
 from PySide6.QtCore import Qt, QSize
 from PySide6.QtGui import QAction, QFont, QIcon, QPixmap
 from PySide6.QtWidgets import (
-    QApplication, QFrame, QHBoxLayout, QLabel, QLineEdit, QListWidget,
-    QMainWindow, QMessageBox, QPushButton, QStackedWidget, QTextEdit,
-    QVBoxLayout, QWidget,
+    QApplication, QComboBox, QFileDialog, QFrame, QHBoxLayout, QLabel,
+    QLineEdit, QListWidget, QMainWindow, QMessageBox, QPushButton,
+    QStackedWidget, QTextEdit, QVBoxLayout, QWidget,
 )
 
 from lumi import __version__
@@ -159,43 +159,17 @@ class LumiWindow(QMainWindow):
         content_layout.setContentsMargins(24, 20, 24, 18)
         content_layout.setSpacing(16)
 
-        topbar = QHBoxLayout()
-        self.current_page_title = QLabel("Чат с лисичкой")
-        self.current_page_title.setObjectName("pageTitle")
-        topbar.addWidget(self.current_page_title)
-        topbar.addStretch()
-        self.model_chip = QPushButton()
-        self.model_chip.setIcon(self._asset_icon("ai-icon.png"))
-        self.model_chip.setIconSize(QSize(20, 20))
-        self.model_chip.setText("  Модели ИИ")
-        self.model_chip.clicked.connect(lambda: self._show_page("models"))
-        topbar.addWidget(self.model_chip)
-        self.update_button = QPushButton("Проверить обновления")
-        self.update_button.clicked.connect(self._start_updater)
-        topbar.addWidget(self.update_button)
-        content_layout.addLayout(topbar)
-
         self.pages = QStackedWidget()
         self.pages.addWidget(self._build_chat_page())
         self.pages.addWidget(self._build_notes_page())
-        self.pages.addWidget(self._build_info_page(
-            "models", "Модели ИИ", "Выбирай модель под свои задачи и возможности компьютера.",
-            "Каталог моделей появится на следующем этапе. Здесь будут название модели, размер загрузки, "
-            "требования к оперативной памяти и кнопки загрузки, выбора и проверки совместимости.",
-            "ai-icon.png",
-        ))
+        self.pages.addWidget(self._build_models_page())
         self.pages.addWidget(self._build_info_page(
             "discord", "Discord", "Связь Lumi с твоим сервером — когда будешь готов.",
             "Интеграция Discord пока не подключена. В будущем здесь можно будет настроить бота "
             "и отдельно выбрать, к каким заметкам ему разрешён доступ.",
             "discord-icon.png",
         ))
-        self.pages.addWidget(self._build_info_page(
-            "settings", "Настройки", "Настрой Lumi под себя.",
-            "Здесь постепенно появятся параметры оформления, поведения приложения и локальных данных. "
-            "Заметки сейчас хранятся на этом компьютере.",
-            "settings-icon.png",
-        ))
+        self.pages.addWidget(self._build_settings_page())
         content_layout.addWidget(self.pages, 1)
 
         root_layout.addWidget(nav)
@@ -205,9 +179,6 @@ class LumiWindow(QMainWindow):
         about = QAction("О Lumi", self)
         about.triggered.connect(self._show_about)
         self.menuBar().addAction(about)
-        check_updates = QAction("Проверить обновления", self)
-        check_updates.triggered.connect(self._start_updater)
-        self.menuBar().addAction(check_updates)
 
     def _add_nav(self, layout: QVBoxLayout, key: str, label: str, icon_name: str) -> None:
         button = QPushButton(label)
@@ -330,6 +301,157 @@ class LumiWindow(QMainWindow):
         layout.addLayout(row, 1)
         return page
 
+    def _build_models_page(self) -> QWidget:
+        """Model-management UI scaffold; runtime integration will be added later."""
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 8, 0, 0)
+        layout.setSpacing(18)
+        layout.addLayout(self._page_heading(
+            "Модели ИИ", "Выбирай модель под возможности компьютера. Управление пока работает как макет."
+        ))
+
+        card = QFrame()
+        card.setObjectName("card")
+        card_layout = QVBoxLayout(card)
+        card_layout.setContentsMargins(24, 24, 24, 24)
+        card_layout.setSpacing(14)
+
+        icon = QLabel()
+        icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        icon.setPixmap(self._asset_icon("ai-icon.png").pixmap(64, 64))
+        card_layout.addWidget(icon)
+
+        status_title = QLabel("Локальная модель не подключена")
+        status_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        status_title.setStyleSheet("font-size: 16pt; font-weight: 650; color: #B8A5FF;")
+        card_layout.addWidget(status_title)
+
+        description = QLabel(
+            "Здесь появятся каталог моделей, размер загрузки, требования к памяти и проверка совместимости. "
+            "Пока можно выбрать файл модели на компьютере — это не запускает и не загружает модель."
+        )
+        description.setObjectName("pageSubtitle")
+        description.setWordWrap(True)
+        description.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        card_layout.addWidget(description)
+
+        self.model_choice = QComboBox()
+        self.model_choice.addItems([
+            "Выбери модель (пока заглушка)",
+            "Небольшая модель — для слабых ПК",
+            "Сбалансированная модель — для обычных ПК",
+            "Большая модель — для мощных ПК",
+        ])
+        self.model_choice.setToolTip("Варианты пока демонстрационные; реальные модели появятся позже.")
+        card_layout.addWidget(self.model_choice)
+
+        self.model_file_label = QLabel("Файл модели: не выбран")
+        self.model_file_label.setObjectName("muted")
+        self.model_file_label.setWordWrap(True)
+        card_layout.addWidget(self.model_file_label)
+
+        model_buttons = QHBoxLayout()
+        choose_model = QPushButton("Выбрать файл модели…")
+        choose_model.clicked.connect(self._choose_model_file)
+        model_buttons.addWidget(choose_model)
+
+        self.enable_model_button = QPushButton("Включить модель")
+        self.enable_model_button.setObjectName("primaryButton")
+        self.enable_model_button.clicked.connect(self._model_placeholder)
+        model_buttons.addWidget(self.enable_model_button)
+
+        self.disable_model_button = QPushButton("Отключить")
+        self.disable_model_button.setEnabled(False)
+        self.disable_model_button.clicked.connect(self._model_placeholder)
+        model_buttons.addWidget(self.disable_model_button)
+        card_layout.addLayout(model_buttons)
+
+        compatibility_button = QPushButton("Проверить совместимость")
+        compatibility_button.clicked.connect(self._model_placeholder)
+        card_layout.addWidget(compatibility_button)
+
+        layout.addWidget(card, 1)
+        return page
+
+    def _choose_model_file(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Выбери файл локальной модели",
+            "",
+            "Модели GGUF (*.gguf);;Все файлы (*.*)",
+        )
+        if path:
+            self.model_file_label.setText(f"Выбран файл: {path}")
+            QMessageBox.information(
+                self,
+                "Файл выбран",
+                "Файл запомнен только для этого окна. Загрузка, проверка и запуск модели ещё не подключены.",
+            )
+
+    def _model_placeholder(self) -> None:
+        QMessageBox.information(
+            self,
+            "Модели Lumi AI",
+            "Этот элемент интерфейса пока заглушка. Подключение движка, загрузка и управление моделью "
+            "будут реализованы отдельным этапом.",
+        )
+
+    def _build_settings_page(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 8, 0, 0)
+        layout.setSpacing(18)
+        layout.addLayout(self._page_heading(
+            "Настройки", "Обновления и параметры Lumi будут собраны здесь."
+        ))
+
+        updates_card = QFrame()
+        updates_card.setObjectName("card")
+        updates_layout = QVBoxLayout(updates_card)
+        updates_layout.setContentsMargins(22, 22, 22, 22)
+        updates_layout.setSpacing(10)
+
+        updates_title = QLabel("Обновления приложения")
+        updates_title.setObjectName("section")
+        updates_layout.addWidget(updates_title)
+        updates_description = QLabel(
+            "Проверка обновлений находится в настройках, а не в верхней панели. "
+            "Автообновление ещё не подключено."
+        )
+        updates_description.setObjectName("pageSubtitle")
+        updates_description.setWordWrap(True)
+        updates_layout.addWidget(updates_description)
+
+        update_button = QPushButton("Проверить обновления")
+        update_button.setObjectName("primaryButton")
+        update_button.clicked.connect(self._start_updater)
+        updates_layout.addWidget(update_button, 0, Qt.AlignmentFlag.AlignLeft)
+        layout.addWidget(updates_card)
+
+        model_card = QFrame()
+        model_card.setObjectName("card")
+        model_layout = QVBoxLayout(model_card)
+        model_layout.setContentsMargins(22, 22, 22, 22)
+        model_layout.setSpacing(10)
+        model_title = QLabel("Поведение ИИ")
+        model_title.setObjectName("section")
+        model_layout.addWidget(model_title)
+        model_description = QLabel(
+            "В будущем здесь можно будет выбрать модель по умолчанию и решить, запускать ли её вместе с Lumi. "
+            "Пока эти настройки не влияют на работу приложения."
+        )
+        model_description.setObjectName("pageSubtitle")
+        model_description.setWordWrap(True)
+        model_layout.addWidget(model_description)
+
+        self.autostart_model_checkbox = QPushButton("Настройка запуска модели — скоро")
+        self.autostart_model_checkbox.setEnabled(False)
+        model_layout.addWidget(self.autostart_model_checkbox, 0, Qt.AlignmentFlag.AlignLeft)
+        layout.addWidget(model_card)
+        layout.addStretch(1)
+        return page
+
     def _build_info_page(self, key: str, title: str, subtitle: str, body: str, icon_name: str) -> QWidget:
         page = QWidget()
         layout = QVBoxLayout(page)
@@ -368,7 +490,6 @@ class LumiWindow(QMainWindow):
         if key not in indexes:
             return
         self.pages.setCurrentIndex(indexes[key])
-        self.current_page_title.setText(titles[key])
         for name, button in self.nav_buttons.items():
             button.setChecked(name == key)
 
