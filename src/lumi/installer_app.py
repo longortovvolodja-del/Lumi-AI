@@ -328,7 +328,7 @@ class InstallerWindow(QMainWindow):
         except OSError as exc:
             QMessageBox.critical(
                 self, "Lumi AI",
-                f"Не удалось создать папку установки:\\n{target}\\n\\n{exc}",
+                f"Не удалось создать папку установки:\n{target}\n\n{exc}",
             )
             return
         self.install_target = target
