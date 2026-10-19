@@ -4,9 +4,19 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Версия бета-сборки без суффикса, например 0.1.7"
+        description: "Основная версия беты, например 0.1.8"
         required: true
-        default: "0.1.7"
+        default: "0.1.8"
+        type: string
+      beta_number:
+        description: "Номер бета-сборки от 1 до 5 цифр, например 1"
+        required: true
+        default: "1"
+        type: string
+      changes:
+        description: "Что добавлено или исправлено"
+        required: true
+        default: "Первый тестовый выпуск Lumi AI 0.1.8."
         type: string
 
 permissions:
@@ -130,30 +140,35 @@ jobs:
           pyinstaller --noconfirm --clean --onefile --windowed --name LumiSetupBootstrap --icon dist/lumi.ico --add-data "dist/payload/Lumi-Internal-Setup.exe;payload" --add-data "dist/installer-version.txt;payload" --add-data "assets;assets" --distpath dist/bootstrap --workpath build/bootstrap src/lumi/installer_app.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $version = (Get-Content dist/installer-version.txt -Raw).Trim()
-          Copy-Item "dist/bootstrap/LumiSetupBootstrap.exe" "dist/Lumi-Setup-$version-beta.exe"
+          $betaNumber = "${{ inputs.beta_number }}"
+          Copy-Item "dist/bootstrap/LumiSetupBootstrap.exe" "dist/Lumi-Setup-$version-beta.$betaNumber.exe"
 
       - name: Generate installer checksum
         shell: pwsh
         run: |
           $version = "${{ inputs.version }}"
-          $installer = Get-Item "dist/Lumi-Setup-$version-beta.exe"
+          $betaNumber = "${{ inputs.beta_number }}"
+          $installer = Get-Item "dist/Lumi-Setup-$version-beta.$betaNumber.exe"
           $hash = (Get-FileHash $installer.FullName -Algorithm SHA256).Hash.ToLower()
           "$hash  $($installer.Name)" | Out-File -Encoding ascii dist/SHA256SUMS.txt
 
       - name: Publish beta GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ inputs.version }}-beta
-          name: Lumi AI v${{ inputs.version }} Beta
+          tag_name: v${{ inputs.version }}-beta.${{ inputs.beta_number }}
+          name: Lumi AI v${{ inputs.version }} Beta ${{ inputs.beta_number }}
           target_commitish: ${{ github.sha }}
           prerelease: true
-          generate_release_notes: true
+          generate_release_notes: false
           body: |
-            ⚠️ **БЕТА-ВЕРСИЯ — МОЖЕТ БЫТЬ НЕСТАБИЛЬНОЙ**
+            ⚠️ **БЕТА-ВЕРСИЯ — ТОЛЬКО ДЛЯ ТЕСТИРОВАНИЯ**
 
-            Эта сборка предназначена для тестирования новых функций Lumi AI. Возможны ошибки, сбои и потеря несохранённых данных. Если нужна максимально стабильная версия, скачайте обычный стабильный релиз.
+            Эта сборка предназначена для проверки новых функций Lumi AI. Она не является стабильным релизом и не должна предлагаться встроенным обновлятором.
 
-            Имя установщика: Lumi-Setup-${{ inputs.version }}-beta.exe. Бета-статус также указан на странице релиза.
+            ## Что добавлено или исправлено
+            ${{ inputs.changes }}
+
+            Установщик: `Lumi-Setup-${{ inputs.version }}-beta.${{ inputs.beta_number }}.exe`.
           files: |
             dist/Lumi-Setup-*-beta.exe
             dist/SHA256SUMS.txt
