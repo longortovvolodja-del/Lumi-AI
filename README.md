@@ -1,6 +1,8 @@
 <p align="center">
-  <img src="assets/lumi-ai-banner.png" width="100%" alt="Lumi AI — баннер проекта">
+  <img src="assets/lumi-fox-logo.png" width="180" height="180" align="left" alt="Lumi — лисёнок">
+  <img src="assets/lumi-ai-banner.png" width="720" height="180" alt="Lumi AI — баннер проекта">
 </p>
+<div style="clear: both;"></div>
 
 **Lumi — твоя умная помощница.** Windows-приложение с локальными заметками и планами по развитию локального ИИ.
 
