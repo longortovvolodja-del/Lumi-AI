@@ -23,6 +23,19 @@ def resource_path(relative_path: str) -> Path:
     return bundle_root / relative_path
 
 
+def installed_version() -> str:
+    """Read the installed marker so beta builds display their full version."""
+    if getattr(sys, "frozen", False):
+        marker = Path(sys.executable).resolve().parent / "version.txt"
+        try:
+            value = marker.read_text(encoding="utf-8").strip()
+            if value:
+                return value
+        except OSError:
+            pass
+    return __version__
+
+
 STYLE = """
 QMainWindow, QWidget {
     background: #0A0C16; color: #F2F4FF;
@@ -162,7 +175,7 @@ class LumiWindow(QMainWindow):
         status_text = QVBoxLayout()
         status_name = QLabel("Lumi рядом")
         status_name.setStyleSheet("font-weight: 600;")
-        status_hint = QLabel(f"Версия {__version__}")
+        status_hint = QLabel(f"Версия {installed_version()}")
         status_hint.setObjectName("muted")
         status_text.addWidget(status_name)
         status_text.addWidget(status_hint)
@@ -478,7 +491,7 @@ class LumiWindow(QMainWindow):
         updates_description.setWordWrap(True)
         updates_layout.addWidget(updates_description)
 
-        current_version = QLabel(f"Установленная версия: {__version__}")
+        current_version = QLabel(f"Установленная версия: {installed_version()}")
         current_version.setObjectName("muted")
         updates_layout.addWidget(current_version)
 
