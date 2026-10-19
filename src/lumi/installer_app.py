@@ -20,7 +20,7 @@ from PySide6.QtWidgets import (
 )
 
 APP_NAME = "Lumi AI"
-DEFAULT_DIR = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "Programs" / APP_NAME
+DEFAULT_PARENT_DIR = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "Programs"
 
 
 def resource_path(*parts: str) -> Path:
@@ -181,12 +181,18 @@ class InstallerWindow(QMainWindow):
         layout.addSpacing(20)
         layout.addWidget(QLabel("Путь установки"))
         path_row = QHBoxLayout()
-        self.path_edit = QLineEdit(str(DEFAULT_DIR))
+        self.path_edit = QLineEdit(str(DEFAULT_PARENT_DIR))
+        self.path_edit.textChanged.connect(self.update_install_preview)
         path_row.addWidget(self.path_edit, 1)
         browse = QPushButton("Обзор…")
         browse.clicked.connect(self.choose_directory)
         path_row.addWidget(browse)
         layout.addLayout(path_row)
+        self.install_preview = QLabel()
+        self.install_preview.setObjectName("muted")
+        self.install_preview.setWordWrap(True)
+        layout.addWidget(self.install_preview)
+        self.update_install_preview()
         self.desktop_checkbox = QCheckBox("Создать ярлык на рабочем столе")
         self.desktop_checkbox.setChecked(True)
         layout.addWidget(self.desktop_checkbox)
@@ -303,20 +309,36 @@ class InstallerWindow(QMainWindow):
         self.refresh_left_art()
 
     def choose_directory(self) -> None:
-        current = self.path_edit.text().strip() or str(DEFAULT_DIR)
-        selected = QFileDialog.getExistingDirectory(self, "Выбери папку установки Lumi AI", current)
+        current = self.path_edit.text().strip() or str(DEFAULT_PARENT_DIR)
+        current = str(self.normalize_parent_path(Path(current)))
+        selected = QFileDialog.getExistingDirectory(self, "Выбери родительскую папку для Lumi AI", current)
         if selected:
-            self.path_edit.setText(selected)
+            self.path_edit.setText(str(self.normalize_parent_path(Path(selected))))
+
+    @staticmethod
+    def normalize_parent_path(path: Path) -> Path:
+        """Treat a selected Lumi AI folder as the target, not its parent."""
+        normalized = Path(os.path.normpath(str(path).strip())).expanduser()
+        while normalized.name.casefold() == APP_NAME.casefold():
+            normalized = normalized.parent
+        return normalized
+
+    def update_install_preview(self, *_args) -> None:
+        raw = self.path_edit.text().strip() or str(DEFAULT_PARENT_DIR)
+        parent = self.normalize_parent_path(Path(raw))
+        target = parent / APP_NAME
+        self.install_preview.setText(f"Папка установки: {target}")
 
     def validate_folder_and_continue(self) -> None:
         raw_dir = self.path_edit.text().strip()
         if not raw_dir:
             QMessageBox.warning(self, "Lumi AI", "Укажи папку установки.")
             return
-        target = Path(raw_dir).expanduser()
-        if not target.is_absolute():
+        parent = self.normalize_parent_path(Path(raw_dir).expanduser())
+        if not parent.is_absolute():
             QMessageBox.warning(self, "Lumi AI", "Путь установки должен быть абсолютным.")
             return
+        target = parent / APP_NAME
         self.install_target = target
         self.go_to_step(2)
 
@@ -330,15 +352,11 @@ class InstallerWindow(QMainWindow):
             self.go_to_step(2)
             return
         target = self.install_target
-        # If the user selects a drive root (for example D:\\), install into
-        # a dedicated Lumi AI folder there instead of scattering app files
-        # across the root of the drive. Other selected folders are used as-is.
-        if target == Path(target.anchor):
-            target = target / APP_NAME
         self.install_target = target
+        # Keep the quotes required by Inno Setup's /DIR parameter on Windows.
         args = [
             str(internal_setup), "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-",
-            f'/DIR="{target}"',
+            f'/DIR="{target}"', "/LOG",
         ]
         if self.desktop_checkbox.isChecked():
             args.append("/TASKS=desktopicon")
@@ -349,7 +367,17 @@ class InstallerWindow(QMainWindow):
         self.status_label.setText("Копируем файлы и создаём ярлыки…")
         self.progress_bar.setRange(0, 0)
         try:
-            self.process = subprocess.Popen(args, close_fds=True)
+            if os.name == "nt":
+                # Pass a raw command line so Inno Setup receives /DIR="path with spaces"
+                # with the embedded quotes intact.
+                command = subprocess.list2cmdline(args[:5]) + f' /DIR="{target}" /LOG'
+                if self.desktop_checkbox.isChecked():
+                    command += " /TASKS=desktopicon"
+                else:
+                    command += " /TASKS="
+                self.process = subprocess.Popen(command, close_fds=True)
+            else:
+                self.process = subprocess.Popen(args, close_fds=True)
         except OSError as exc:
             self.status_label.setText("Не удалось запустить установку.")
             self.progress_note.setText(str(exc))
