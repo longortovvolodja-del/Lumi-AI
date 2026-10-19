@@ -470,12 +470,17 @@ class LumiWindow(QMainWindow):
         updates_title.setObjectName("section")
         updates_layout.addWidget(updates_title)
         updates_description = QLabel(
-            "Проверка обновлений находится в настройках, а не в верхней панели. "
-            "Автообновление ещё не подключено."
+            "Lumi проверяет только последние стабильные релизы GitHub. Бета-сборки "
+            "не предлагаются обновлятором. При обновлении откроется отдельное окно "
+            "с этапами проверки, загрузки и установки."
         )
         updates_description.setObjectName("pageSubtitle")
         updates_description.setWordWrap(True)
         updates_layout.addWidget(updates_description)
+
+        current_version = QLabel(f"Установленная версия: {__version__}")
+        current_version.setObjectName("muted")
+        updates_layout.addWidget(current_version)
 
         update_button = QPushButton("Проверить обновления")
         update_button.setObjectName("primaryButton")
