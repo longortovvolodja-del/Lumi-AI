@@ -1,4 +1,6 @@
-# <img src="assets/lumi-app-icon.png" width="44" align="center" alt="Lumi fox logo"> Lumi AI
+<p align="center">
+  <img src="assets/lumi-ai-banner.png" width="100%" alt="Lumi AI — баннер проекта">
+</p>
 
 **Lumi — твоя умная помощница.** Windows-приложение с локальными заметками и планами по развитию локального ИИ.
 
