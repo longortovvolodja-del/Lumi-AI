@@ -452,5 +452,5 @@ jobs:
 
             Установщик: `Lumi-Setup-${{ inputs.version }}-beta.${{ inputs.beta_number }}.exe`.
           files: |
-            dist/Lumi-Setup-*-beta.exe
+            dist/Lumi-Setup-*-beta.*.exe
             dist/SHA256SUMS.txt
