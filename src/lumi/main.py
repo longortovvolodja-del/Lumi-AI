@@ -1,25 +1,16 @@
-"""Lumi desktop app: local notes and a model-manager placeholder."""
+"""Lumi desktop app: neon sidebar, local notes and planned AI sections."""
 from __future__ import annotations
 
-import sys
 import subprocess
+import sys
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QSize
 from PySide6.QtGui import QAction, QFont, QIcon, QPixmap
 from PySide6.QtWidgets import (
-    QApplication,
-    QHBoxLayout,
-    QLabel,
-    QLineEdit,
-    QListWidget,
-    QMainWindow,
-    QMessageBox,
-    QPushButton,
-    QSplitter,
-    QTextEdit,
-    QVBoxLayout,
-    QWidget,
+    QApplication, QFrame, QHBoxLayout, QLabel, QLineEdit, QListWidget,
+    QMainWindow, QMessageBox, QPushButton, QStackedWidget, QTextEdit,
+    QVBoxLayout, QWidget,
 )
 
 from lumi import __version__
@@ -34,138 +25,181 @@ def resource_path(relative_path: str) -> Path:
 
 STYLE = """
 QMainWindow, QWidget {
-    background: #080D25;
-    color: #F4F3FF;
-    font-family: Segoe UI, sans-serif;
-    font-size: 10pt;
+    background: #0A0C16; color: #F2F4FF;
+    font-family: Segoe UI, sans-serif; font-size: 10pt;
 }
+QWidget#navPanel { background: #0E1120; border-right: 1px solid #20263B; }
+QWidget#contentPanel { background: #0A0C16; }
+QLabel#brand { color: #7CEEFF; font-size: 18pt; font-weight: 700; }
+QLabel#subtitle { color: #8D97B8; font-size: 9pt; }
+QLabel#section { color: #8CEBFF; font-size: 12pt; font-weight: 600; }
+QLabel#muted { color: #929BB8; }
+QLabel#pageTitle { color: #F5F6FF; font-size: 20pt; font-weight: 650; }
+QLabel#pageSubtitle { color: #9AA5C6; font-size: 10pt; }
 QLineEdit, QTextEdit, QListWidget {
-    background: #10183A;
-    border: 1px solid #263B85;
-    border-radius: 9px;
-    padding: 8px;
-    selection-background-color: #6655E8;
+    background: #111626; border: 1px solid #27314A; border-radius: 9px;
+    padding: 9px; selection-background-color: #354E8C;
 }
+QLineEdit:focus, QTextEdit:focus, QListWidget:focus { border: 1px solid #3AD9F2; }
 QPushButton {
-    background: #302B75;
-    border: 1px solid #6255D9;
-    border-radius: 9px;
-    padding: 9px 13px;
+    background: #182238; border: 1px solid #2A3C5A; border-radius: 9px;
+    padding: 9px 12px; min-height: 20px;
 }
-QPushButton:hover { background: #443AA0; }
-QPushButton:pressed { background: #24205C; }
-QLabel#brand { color: #78F3FF; font-size: 19pt; font-weight: 700; }
-QLabel#subtitle { color: #C0C8FF; font-size: 10pt; }
-QLabel#section { color: #78F3FF; font-size: 11pt; font-weight: 600; }
-QPushButton { min-height: 20px; }
-QPushButton:disabled { color: #7E86B8; background: #171D40; border-color: #28305C; }
-QLineEdit:focus, QTextEdit:focus, QListWidget:focus { border: 1px solid #78F3FF; }
-QLabel#muted { color: #A7B6F4; }
-QListWidget::item { padding: 8px; border-radius: 6px; }
-QListWidget::item:selected { background: #302B75; }
+QPushButton:hover { background: #202E49; border-color: #3BBDD2; }
+QPushButton:pressed { background: #151D30; }
+QPushButton:disabled { color: #69738F; background: #111626; border-color: #20283A; }
+QPushButton#navButton {
+    text-align: left; background: transparent; border: 1px solid transparent;
+    color: #A9B2CC; padding: 11px 12px; min-height: 24px;
+}
+QPushButton#navButton:hover { background: #171D30; color: #E8F9FF; }
+QPushButton#navButton:checked {
+    background: #15263A; border: 1px solid #24546A; color: #83F0FF;
+}
+QPushButton#primaryButton {
+    background: #173B50; border: 1px solid #267C98; color: #D9FAFF;
+}
+QPushButton#primaryButton:hover { background: #20536A; }
+QListWidget::item { padding: 9px; border-radius: 6px; }
+QListWidget::item:selected { background: #1A2B46; color: #8CEBFF; }
+QMenuBar { background: #0E1120; color: #DCE4FF; }
+QMenuBar::item:selected, QMenu::item:selected { background: #1A2B46; }
+QMenu { background: #111626; border: 1px solid #27314A; }
+QFrame#card { background: #101625; border: 1px solid #242E46; border-radius: 14px; }
 """
 
 
 class LumiWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle("Lumi — твоя умная помощница")
+        self.setWindowTitle("Lumi AI — твоя умная помощница")
         self.setWindowIcon(QIcon(str(resource_path("assets/lumi-app-icon.png"))))
-        self.resize(1000, 650)
+        self.resize(1120, 720)
+        self.setMinimumSize(850, 560)
         self.store = NotesStore()
         self.current_note_id: int | None = None
+        self.nav_buttons: dict[str, QPushButton] = {}
         self._build_ui()
         self._reload_notes()
+        self._show_page("chat")
+
+    def _asset_icon(self, name: str) -> QIcon:
+        return QIcon(str(resource_path(f"assets/{name}")))
 
     def _build_ui(self) -> None:
         root = QWidget()
-        outer = QVBoxLayout(root)
-        outer.setContentsMargins(18, 16, 18, 16)
-        outer.setSpacing(12)
+        root_layout = QHBoxLayout(root)
+        root_layout.setContentsMargins(0, 0, 0, 0)
+        root_layout.setSpacing(0)
 
-        header = QHBoxLayout()
+        nav = QWidget()
+        nav.setObjectName("navPanel")
+        nav.setFixedWidth(224)
+        nav_layout = QVBoxLayout(nav)
+        nav_layout.setContentsMargins(14, 20, 14, 16)
+        nav_layout.setSpacing(7)
+
+        brand_row = QHBoxLayout()
         logo = QLabel()
-        logo.setFixedSize(52, 52)
-        logo.setPixmap(
-            QPixmap(str(resource_path("assets/lumi-app-icon.png"))).scaled(
-                48, 48, Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation,
-            )
-        )
-        header.addWidget(logo)
-
-        brand_column = QVBoxLayout()
+        logo.setFixedSize(42, 42)
+        logo.setPixmap(QPixmap(str(resource_path("assets/lumi-app-icon.png"))).scaled(
+            40, 40, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
+        ))
+        brand_text = QVBoxLayout()
         brand = QLabel("Lumi AI")
         brand.setObjectName("brand")
-        subtitle = QLabel("Твоя умная помощница")
+        subtitle = QLabel("ТВОЯ УМНАЯ ПОМОЩНИЦА")
         subtitle.setObjectName("subtitle")
-        brand_column.addWidget(brand)
-        brand_column.addWidget(subtitle)
-        header.addLayout(brand_column)
-        header.addStretch()
-        self.model_button = QPushButton("Модели ИИ")
-        self.model_button.setIcon(QIcon(str(resource_path("assets/ai-icon.png"))))
-        self.model_button.setIconSize(QSize(22, 22))
-        self.model_button.clicked.connect(self._show_models_info)
-        header.addWidget(self.model_button)
+        brand_text.addWidget(brand)
+        brand_text.addWidget(subtitle)
+        brand_row.addWidget(logo)
+        brand_row.addLayout(brand_text, 1)
+        nav_layout.addLayout(brand_row)
+        nav_layout.addSpacing(24)
+
+        nav_caption = QLabel("РАБОЧЕЕ ПРОСТРАНСТВО")
+        nav_caption.setObjectName("muted")
+        nav_caption.setStyleSheet("font-size: 8pt; letter-spacing: 1px;")
+        nav_layout.addWidget(nav_caption)
+
+        self._add_nav(nav_layout, "chat", "Чат с лисичкой", "lumi-tray-icon.png")
+        self._add_nav(nav_layout, "notes", "Заметки", "notes-icon.png")
+        self._add_nav(nav_layout, "models", "Модели ИИ", "ai-icon.png")
+        self._add_nav(nav_layout, "discord", "Discord", "discord-icon.png")
+        nav_layout.addStretch()
+
+        divider = QFrame()
+        divider.setFrameShape(QFrame.Shape.HLine)
+        divider.setStyleSheet("color: #20263B;")
+        nav_layout.addWidget(divider)
+        self._add_nav(nav_layout, "settings", "Настройки", "settings-icon.png")
+
+        status_card = QFrame()
+        status_card.setObjectName("card")
+        status_layout = QHBoxLayout(status_card)
+        status_layout.setContentsMargins(10, 10, 10, 10)
+        status_logo = QLabel()
+        status_logo.setPixmap(QPixmap(str(resource_path("assets/lumi-tray-icon.png"))).scaled(
+            30, 30, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
+        ))
+        status_text = QVBoxLayout()
+        status_name = QLabel("Lumi рядом")
+        status_name.setStyleSheet("font-weight: 600;")
+        status_hint = QLabel(f"Версия {__version__}")
+        status_hint.setObjectName("muted")
+        status_text.addWidget(status_name)
+        status_text.addWidget(status_hint)
+        status_layout.addWidget(status_logo)
+        status_layout.addLayout(status_text, 1)
+        nav_layout.addWidget(status_card)
+
+        content = QWidget()
+        content.setObjectName("contentPanel")
+        content_layout = QVBoxLayout(content)
+        content_layout.setContentsMargins(24, 20, 24, 18)
+        content_layout.setSpacing(16)
+
+        topbar = QHBoxLayout()
+        self.current_page_title = QLabel("Чат с лисичкой")
+        self.current_page_title.setObjectName("pageTitle")
+        topbar.addWidget(self.current_page_title)
+        topbar.addStretch()
+        self.model_chip = QPushButton()
+        self.model_chip.setIcon(self._asset_icon("ai-icon.png"))
+        self.model_chip.setIconSize(QSize(20, 20))
+        self.model_chip.setText("  Модели ИИ")
+        self.model_chip.clicked.connect(lambda: self._show_page("models"))
+        topbar.addWidget(self.model_chip)
         self.update_button = QPushButton("Проверить обновления")
-        self.update_button.setIcon(QIcon(str(resource_path("assets/settings-icon.png"))))
         self.update_button.clicked.connect(self._start_updater)
-        header.addWidget(self.update_button)
-        outer.addLayout(header)
+        topbar.addWidget(self.update_button)
+        content_layout.addLayout(topbar)
 
-        splitter = QSplitter(Qt.Orientation.Horizontal)
-        sidebar = QWidget()
-        side_layout = QVBoxLayout(sidebar)
-        search_label = QLabel("Заметки")
-        search_label.setObjectName("section")
-        side_layout.addWidget(search_label)
-        self.search = QLineEdit()
-        self.search.setPlaceholderText("⌕  Найти заметку…")
-        self.search.textChanged.connect(self._reload_notes)
-        side_layout.addWidget(self.search)
-        self.notes_list = QListWidget()
-        self.notes_list.currentRowChanged.connect(self._select_note)
-        side_layout.addWidget(self.notes_list)
-        buttons = QHBoxLayout()
-        new_button = QPushButton("＋ Новая заметка")
-        new_button.setIcon(QIcon(str(resource_path("assets/lumi-app-icon.png"))))
-        new_button.clicked.connect(self._new_note)
-        delete_button = QPushButton("⌫ Удалить")
-        delete_button.clicked.connect(self._delete_note)
-        buttons.addWidget(new_button)
-        buttons.addWidget(delete_button)
-        side_layout.addLayout(buttons)
+        self.pages = QStackedWidget()
+        self.pages.addWidget(self._build_chat_page())
+        self.pages.addWidget(self._build_notes_page())
+        self.pages.addWidget(self._build_info_page(
+            "models", "Модели ИИ", "Выбирай модель под свои задачи и возможности компьютера.",
+            "Каталог моделей появится на следующем этапе. Здесь будут название модели, размер загрузки, "
+            "требования к оперативной памяти и кнопки загрузки, выбора и проверки совместимости.",
+            "ai-icon.png",
+        ))
+        self.pages.addWidget(self._build_info_page(
+            "discord", "Discord", "Связь Lumi с твоим сервером — когда будешь готов.",
+            "Интеграция Discord пока не подключена. В будущем здесь можно будет настроить бота "
+            "и отдельно выбрать, к каким заметкам ему разрешён доступ.",
+            "discord-icon.png",
+        ))
+        self.pages.addWidget(self._build_info_page(
+            "settings", "Настройки", "Настрой Lumi под себя.",
+            "Здесь постепенно появятся параметры оформления, поведения приложения и локальных данных. "
+            "Заметки сейчас хранятся на этом компьютере.",
+            "settings-icon.png",
+        ))
+        content_layout.addWidget(self.pages, 1)
 
-        editor = QWidget()
-        edit_layout = QVBoxLayout(editor)
-        editor_heading = QLabel("Редактор заметки")
-        editor_heading.setObjectName("section")
-        edit_layout.addWidget(editor_heading)
-        self.title_edit = QLineEdit()
-        self.title_edit.setPlaceholderText("Название заметки")
-        self.body_edit = QTextEdit()
-        self.body_edit.setPlaceholderText("Запиши сюда идею, план или важную информацию…")
-        edit_layout.addWidget(self.title_edit)
-        edit_layout.addWidget(self.body_edit, 1)
-        save_row = QHBoxLayout()
-        self.status = QLabel("Заметки сохраняются на этом компьютере.")
-        self.status.setObjectName("muted")
-        save_button = QPushButton("✓  Сохранить заметку")
-        save_button.clicked.connect(self._save_note)
-        save_row.addWidget(self.status, 1)
-        save_row.addWidget(save_button)
-        edit_layout.addLayout(save_row)
-
-        splitter.addWidget(sidebar)
-        splitter.addWidget(editor)
-        splitter.setStretchFactor(0, 1)
-        splitter.setStretchFactor(1, 2)
-        outer.addWidget(splitter, 1)
-
-        footer = QLabel(f"Lumi {__version__} · локальные заметки · ранняя версия")
-        footer.setObjectName("muted")
-        outer.addWidget(footer)
+        root_layout.addWidget(nav)
+        root_layout.addWidget(content, 1)
         self.setCentralWidget(root)
 
         about = QAction("О Lumi", self)
@@ -175,7 +209,172 @@ class LumiWindow(QMainWindow):
         check_updates.triggered.connect(self._start_updater)
         self.menuBar().addAction(check_updates)
 
+    def _add_nav(self, layout: QVBoxLayout, key: str, label: str, icon_name: str) -> None:
+        button = QPushButton(label)
+        button.setObjectName("navButton")
+        button.setCheckable(True)
+        button.setIcon(self._asset_icon(icon_name))
+        button.setIconSize(QSize(23, 23))
+        button.setCursor(Qt.CursorShape.PointingHandCursor)
+        button.clicked.connect(lambda checked=False, page=key: self._show_page(page))
+        layout.addWidget(button)
+        self.nav_buttons[key] = button
+
+    def _page_heading(self, title: str, subtitle: str) -> QVBoxLayout:
+        layout = QVBoxLayout()
+        heading = QLabel(title)
+        heading.setObjectName("pageTitle")
+        desc = QLabel(subtitle)
+        desc.setObjectName("pageSubtitle")
+        desc.setWordWrap(True)
+        layout.addWidget(heading)
+        layout.addWidget(desc)
+        return layout
+
+    def _build_chat_page(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 8, 0, 0)
+        layout.setSpacing(16)
+        layout.addLayout(self._page_heading(
+            "Привет! Я Lumi ✨", "Твоя неоновая помощница с лисьим характером."
+        ))
+        card = QFrame()
+        card.setObjectName("card")
+        card_layout = QVBoxLayout(card)
+        card_layout.setContentsMargins(24, 24, 24, 24)
+        card_layout.setSpacing(14)
+        mascot = QLabel()
+        mascot.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        mascot.setPixmap(QPixmap(str(resource_path("assets/lumi-tray-icon.png"))).scaled(
+            104, 104, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
+        ))
+        card_layout.addWidget(mascot)
+        welcome = QLabel("Рада тебя видеть!")
+        welcome.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        welcome.setStyleSheet("font-size: 17pt; font-weight: 650; color: #8CEBFF;")
+        card_layout.addWidget(welcome)
+        intro = QLabel(
+            "Это будет наше место для общения. Сейчас в Lumi уже работают локальные заметки, "
+            "а подключение настоящего ИИ и отправка сообщений появятся отдельным этапом."
+        )
+        intro.setObjectName("pageSubtitle")
+        intro.setWordWrap(True)
+        intro.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        intro.setMaximumWidth(580)
+        card_layout.addWidget(intro, 0, Qt.AlignmentFlag.AlignHCenter)
+        layout.addWidget(card, 1)
+        chat_row = QHBoxLayout()
+        self.chat_input = QLineEdit()
+        self.chat_input.setPlaceholderText("Чат с ИИ пока готовится…")
+        self.chat_input.setEnabled(False)
+        send_button = QPushButton("Отправить")
+        send_button.setObjectName("primaryButton")
+        send_button.setEnabled(False)
+        chat_row.addWidget(self.chat_input, 1)
+        chat_row.addWidget(send_button)
+        layout.addLayout(chat_row)
+        note = QLabel("ИИ пока не подключён — кнопка отправки станет активной после интеграции модели.")
+        note.setObjectName("muted")
+        layout.addWidget(note)
+        return page
+
+    def _build_notes_page(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 8, 0, 0)
+        layout.setSpacing(14)
+        layout.addLayout(self._page_heading("Твои заметки", "Идеи и важная информация остаются на твоём компьютере."))
+        row = QHBoxLayout()
+        left = QWidget()
+        left_layout = QVBoxLayout(left)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+        self.search = QLineEdit()
+        self.search.setPlaceholderText("⌕  Найти заметку…")
+        self.search.textChanged.connect(self._reload_notes)
+        left_layout.addWidget(self.search)
+        self.notes_list = QListWidget()
+        self.notes_list.currentRowChanged.connect(self._select_note)
+        left_layout.addWidget(self.notes_list, 1)
+        controls = QHBoxLayout()
+        new_button = QPushButton("＋ Новая")
+        new_button.clicked.connect(self._new_note)
+        delete_button = QPushButton("Удалить")
+        delete_button.clicked.connect(self._delete_note)
+        controls.addWidget(new_button)
+        controls.addWidget(delete_button)
+        left_layout.addLayout(controls)
+
+        editor = QFrame()
+        editor.setObjectName("card")
+        edit_layout = QVBoxLayout(editor)
+        edit_layout.setContentsMargins(16, 16, 16, 16)
+        edit_heading = QLabel("Редактор заметки")
+        edit_heading.setObjectName("section")
+        edit_layout.addWidget(edit_heading)
+        self.title_edit = QLineEdit()
+        self.title_edit.setPlaceholderText("Название заметки")
+        self.body_edit = QTextEdit()
+        self.body_edit.setPlaceholderText("Запиши сюда идею, план или важную информацию…")
+        edit_layout.addWidget(self.title_edit)
+        edit_layout.addWidget(self.body_edit, 1)
+        self.status = QLabel("Заметки сохраняются на этом компьютере.")
+        self.status.setObjectName("muted")
+        save_button = QPushButton("✓  Сохранить заметку")
+        save_button.setObjectName("primaryButton")
+        save_button.clicked.connect(self._save_note)
+        edit_layout.addWidget(self.status)
+        edit_layout.addWidget(save_button)
+        row.addWidget(left, 2)
+        row.addWidget(editor, 3)
+        layout.addLayout(row, 1)
+        return page
+
+    def _build_info_page(self, key: str, title: str, subtitle: str, body: str, icon_name: str) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 8, 0, 0)
+        layout.setSpacing(18)
+        layout.addLayout(self._page_heading(title, subtitle))
+        card = QFrame()
+        card.setObjectName("card")
+        card_layout = QVBoxLayout(card)
+        card_layout.setContentsMargins(24, 24, 24, 24)
+        card_layout.setSpacing(16)
+        icon = QLabel()
+        icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        icon.setPixmap(QPixmap(str(resource_path(f"assets/{icon_name}"))).scaled(
+            72, 72, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
+        ))
+        card_layout.addWidget(icon)
+        heading = QLabel("Скоро в Lumi")
+        heading.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        heading.setStyleSheet("font-size: 16pt; font-weight: 650; color: #B8A5FF;")
+        card_layout.addWidget(heading)
+        desc = QLabel(body)
+        desc.setWordWrap(True)
+        desc.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        desc.setObjectName("pageSubtitle")
+        card_layout.addWidget(desc)
+        layout.addWidget(card, 1)
+        return page
+
+    def _show_page(self, key: str) -> None:
+        indexes = {"chat": 0, "notes": 1, "models": 2, "discord": 3, "settings": 4}
+        titles = {
+            "chat": "Чат с лисичкой", "notes": "Заметки", "models": "Модели ИИ",
+            "discord": "Discord", "settings": "Настройки",
+        }
+        if key not in indexes:
+            return
+        self.pages.setCurrentIndex(indexes[key])
+        self.current_page_title.setText(titles[key])
+        for name, button in self.nav_buttons.items():
+            button.setChecked(name == key)
+
     def _reload_notes(self, *_: object) -> None:
+        if not hasattr(self, "notes_list"):
+            return
         selected_id = self.current_note_id
         self.notes_list.blockSignals(True)
         self.notes_list.clear()
@@ -225,9 +424,7 @@ class LumiWindow(QMainWindow):
     def _delete_note(self) -> None:
         if self.current_note_id is None:
             return
-        answer = QMessageBox.question(
-            self, "Удалить заметку", "Точно удалить выбранную заметку?"
-        )
+        answer = QMessageBox.question(self, "Удалить заметку", "Точно удалить выбранную заметку?")
         if answer == QMessageBox.StandardButton.Yes:
             self.store.delete_note(self.current_note_id)
             self.current_note_id = None
@@ -237,14 +434,12 @@ class LumiWindow(QMainWindow):
         updater = Path(sys.executable).resolve().parent / "LumiUpdater.exe"
         if not updater.is_file():
             QMessageBox.warning(
-                self,
-                "Обновление Lumi AI",
+                self, "Обновление Lumi AI",
                 "Обновлятор ещё не включён в эту сборку. Скачай последнюю сборку после завершения настройки обновлений.",
             )
             return
         answer = QMessageBox.question(
-            self,
-            "Проверить обновления",
+            self, "Проверить обновления",
             "Lumi проверит наличие новой версии. Приложение закроется на время установки. Продолжить?",
         )
         if answer != QMessageBox.StandardButton.Yes:
@@ -252,26 +447,15 @@ class LumiWindow(QMainWindow):
         try:
             subprocess.Popen([str(updater), "--update"], cwd=str(updater.parent))
         except OSError as exc:
-            QMessageBox.critical(self, "Обновление Lumi AI", f"Не удалось запустить обновлятор:\\n{exc}")
+            QMessageBox.critical(self, "Обновление Lumi AI", f"Не удалось запустить обновлятор:\n{exc}")
             return
         QApplication.quit()
 
-    def _show_models_info(self) -> None:
-        QMessageBox.information(
-            self,
-            "Модели ИИ",
-            "Менеджер моделей будет добавлен следующим этапом.\n\n"
-            "Он проверит память компьютера, покажет доступные GGUF-модели "
-            "и позволит скачать и переключить модель. Пока локальный ИИ ещё не подключён.",
-        )
-
     def _show_about(self) -> None:
         QMessageBox.about(
-            self,
-            "О Lumi",
+            self, "О Lumi",
             f"Lumi {__version__}\nТвоя умная помощница.\n\n"
-            "Это ранняя версия: заметки работают локально, "
-            "ИИ и Discord будут подключены отдельными этапами.",
+            "Заметки работают локально. Подключение ИИ и Discord планируется отдельными этапами.",
         )
 
 
