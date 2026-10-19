@@ -100,7 +100,11 @@ class UpdateWorker(QObject):
             installed = version_path.read_text(encoding="utf-8").strip() if version_path.is_file() else "0.0.0"
             if not latest or not re.fullmatch(r"\\d+\\.\\d+\\.\\d+", latest):
                 raise RuntimeError("GitHub вернул некорректную версию стабильного релиза.")
-            if _version_key(installed) >= _version_key(latest):
+            installed_base = installed.split("-", 1)[0]
+            installed_is_beta = "-beta" in installed.lower()
+            is_current_or_newer = _version_key(installed_base) >= _version_key(latest)
+            beta_needs_stable = installed_is_beta and _version_key(installed_base) == _version_key(latest)
+            if is_current_or_newer and not beta_needs_stable:
                 self.checked.emit(installed, latest, False)
                 self.finished.emit()
                 return
