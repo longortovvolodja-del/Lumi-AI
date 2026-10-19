@@ -330,9 +330,15 @@ class InstallerWindow(QMainWindow):
             self.go_to_step(2)
             return
         target = self.install_target
+        # If the user selects a drive root (for example D:\\), install into
+        # a dedicated Lumi AI folder there instead of scattering app files
+        # across the root of the drive. Other selected folders are used as-is.
+        if target == Path(target.anchor):
+            target = target / APP_NAME
+        self.install_target = target
         args = [
             str(internal_setup), "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-",
-            f"/DIR={target}",
+            f'/DIR="{target}"',
         ]
         if self.desktop_checkbox.isChecked():
             args.append("/TASKS=desktopicon")
