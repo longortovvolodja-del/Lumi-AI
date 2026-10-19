@@ -255,7 +255,7 @@ class InstallerWindow(QMainWindow):
         self.finish_button = QPushButton("Ожидание…")
         self.finish_button.setObjectName("primary")
         self.finish_button.setEnabled(False)
-        self.finish_button.clicked.connect(self.finish)
+        self.finish_button.clicked.connect(self.begin_install)
         row = QHBoxLayout()
         row.addStretch()
         row.addWidget(self.finish_button)
