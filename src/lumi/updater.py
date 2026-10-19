@@ -73,7 +73,7 @@ def _installed_program() -> tuple[Path | None, str | None]:
 
 
 def _version_key(value: str) -> tuple[int, ...]:
-    numbers = re.findall(r"\\d+", value)
+    numbers = re.findall(r"\d+", value)
     return tuple(int(number) for number in numbers) or (0,)
 
 
@@ -98,7 +98,7 @@ class UpdateWorker(QObject):
             latest = str(self.release.get("tag_name", "")).removeprefix("v")
             version_path = self.install_dir / "version.txt"
             installed = version_path.read_text(encoding="utf-8").strip() if version_path.is_file() else "0.0.0"
-            if not latest or not re.fullmatch(r"\\d+\\.\\d+\\.\\d+", latest):
+            if not latest or not re.fullmatch(r"\d+\.\d+\.\d+", latest):
                 raise RuntimeError("GitHub вернул некорректную версию стабильного релиза.")
             installed_base = installed.split("-", 1)[0]
             installed_is_beta = "-beta" in installed.lower()
