@@ -1,3 +1,3 @@
 """Lumi — a friendly local AI companion."""
 
-__version__ = "0.1.1"
+__version__ = "0.1.8"

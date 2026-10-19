@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QSize
-from PySide6.QtGui import QAction, QFont, QIcon, QPixmap
+from PySide6.QtGui import QAction, QFont, QIcon, QPixmap, QTextCursor
 from PySide6.QtWidgets import (
     QApplication, QComboBox, QFileDialog, QFrame, QHBoxLayout, QLabel,
     QLineEdit, QListWidget, QMainWindow, QMessageBox, QPushButton,
@@ -23,12 +23,25 @@ def resource_path(relative_path: str) -> Path:
     return bundle_root / relative_path
 
 
+def installed_version() -> str:
+    """Read the installed marker so beta builds display their full version."""
+    if getattr(sys, "frozen", False):
+        marker = Path(sys.executable).resolve().parent / "version.txt"
+        try:
+            value = marker.read_text(encoding="utf-8").strip()
+            if value:
+                return value
+        except OSError:
+            pass
+    return __version__
+
+
 STYLE = """
 QMainWindow, QWidget {
     background: #0A0C16; color: #F2F4FF;
     font-family: Segoe UI, sans-serif; font-size: 10pt;
 }
-QWidget#navPanel { background: #0E1120; border-right: 1px solid #20263B; }
+QWidget#navPanel { background: #020D30; border-right: 1px solid #20263B; }
 QWidget#contentPanel { background: #0A0C16; }
 QLabel#brand { color: #7CEEFF; font-size: 18pt; font-weight: 700; }
 QLabel#subtitle { color: #8D97B8; font-size: 9pt; }
@@ -49,13 +62,15 @@ QPushButton:hover { background: #202E49; border-color: #3BBDD2; }
 QPushButton:pressed { background: #151D30; }
 QPushButton:disabled { color: #69738F; background: #111626; border-color: #20283A; }
 QPushButton#navButton {
-    text-align: left; background: transparent; border: 1px solid transparent;
+    text-align: left; background: #01071B; border: 1px solid transparent;
     color: #A9B2CC; padding: 11px 12px; min-height: 24px;
 }
-QPushButton#navButton:hover { background: #171D30; color: #E8F9FF; }
+QPushButton#navButton:hover { background: #101B38; color: #E8F9FF; }
 QPushButton#navButton:checked {
     background: #15263A; border: 1px solid #24546A; color: #83F0FF;
 }
+QPushButton#navToggle { background: transparent; border: none; padding: 4px; min-width: 28px; min-height: 28px; }
+QPushButton#navToggle:hover { background: #101B38; }
 QPushButton#primaryButton {
     background: #173B50; border: 1px solid #267C98; color: #D9FAFF;
 }
@@ -79,6 +94,7 @@ class LumiWindow(QMainWindow):
         self.store = NotesStore()
         self.current_note_id: int | None = None
         self.nav_buttons: dict[str, QPushButton] = {}
+        self.sidebar_collapsed = False
         self._build_ui()
         self._reload_notes()
         self._show_page("chat")
@@ -94,26 +110,39 @@ class LumiWindow(QMainWindow):
 
         nav = QWidget()
         nav.setObjectName("navPanel")
-        nav.setFixedWidth(224)
+        nav.setFixedWidth(248)
+        self.nav_panel = nav
         nav_layout = QVBoxLayout(nav)
         nav_layout.setContentsMargins(14, 20, 14, 16)
         nav_layout.setSpacing(7)
 
         brand_row = QHBoxLayout()
-        logo = QLabel()
+        logo = QPushButton()
+        logo.setObjectName("navToggle")
         logo.setFixedSize(42, 42)
-        logo.setPixmap(QPixmap(str(resource_path("assets/lumi-app-icon.png"))).scaled(
-            40, 40, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
-        ))
-        brand_text = QVBoxLayout()
+        logo.setIcon(self._asset_icon("lumi-app-icon.png"))
+        logo.setIconSize(QSize(40, 40))
+        logo.setCursor(Qt.CursorShape.PointingHandCursor)
+        logo.setToolTip("Нажми, чтобы развернуть панель")
+        logo.clicked.connect(self._expand_sidebar)
+        self.brand_logo_button = logo
+        self.brand_text_widget = QWidget()
+        brand_text = QVBoxLayout(self.brand_text_widget)
+        brand_text.setContentsMargins(0, 0, 0, 0)
         brand = QLabel("Lumi AI")
         brand.setObjectName("brand")
-        subtitle = QLabel("ТВОЯ УМНАЯ ПОМОЩНИЦА")
+        subtitle = QLabel("Твоя умная помощница")
         subtitle.setObjectName("subtitle")
+        subtitle.setWordWrap(True)
         brand_text.addWidget(brand)
         brand_text.addWidget(subtitle)
         brand_row.addWidget(logo)
-        brand_row.addLayout(brand_text, 1)
+        brand_row.addWidget(self.brand_text_widget, 1)
+        self.sidebar_toggle = QPushButton("‹")
+        self.sidebar_toggle.setObjectName("navToggle")
+        self.sidebar_toggle.setToolTip("Свернуть боковую панель")
+        self.sidebar_toggle.clicked.connect(self._toggle_sidebar)
+        brand_row.addWidget(self.sidebar_toggle)
         nav_layout.addLayout(brand_row)
         nav_layout.addSpacing(24)
 
@@ -121,6 +150,7 @@ class LumiWindow(QMainWindow):
         nav_caption.setObjectName("muted")
         nav_caption.setStyleSheet("font-size: 8pt; letter-spacing: 1px;")
         nav_layout.addWidget(nav_caption)
+        self.nav_caption = nav_caption
 
         self._add_nav(nav_layout, "chat", "Чат с лисичкой", "lumi-tray-icon.png")
         self._add_nav(nav_layout, "notes", "Заметки", "notes-icon.png")
@@ -145,13 +175,14 @@ class LumiWindow(QMainWindow):
         status_text = QVBoxLayout()
         status_name = QLabel("Lumi рядом")
         status_name.setStyleSheet("font-weight: 600;")
-        status_hint = QLabel(f"Версия {__version__}")
+        status_hint = QLabel(f"Версия {installed_version()}")
         status_hint.setObjectName("muted")
         status_text.addWidget(status_name)
         status_text.addWidget(status_hint)
         status_layout.addWidget(status_logo)
         status_layout.addLayout(status_text, 1)
         nav_layout.addWidget(status_card)
+        self.status_card = status_card
 
         content = QWidget()
         content.setObjectName("contentPanel")
@@ -183,6 +214,7 @@ class LumiWindow(QMainWindow):
     def _add_nav(self, layout: QVBoxLayout, key: str, label: str, icon_name: str) -> None:
         button = QPushButton(label)
         button.setObjectName("navButton")
+        button.setProperty("navLabel", label)
         button.setCheckable(True)
         button.setIcon(self._asset_icon(icon_name))
         button.setIconSize(QSize(23, 23))
@@ -190,6 +222,30 @@ class LumiWindow(QMainWindow):
         button.clicked.connect(lambda checked=False, page=key: self._show_page(page))
         layout.addWidget(button)
         self.nav_buttons[key] = button
+
+    def _toggle_sidebar(self) -> None:
+        self._set_sidebar_collapsed(not self.sidebar_collapsed)
+
+    def _expand_sidebar(self) -> None:
+        if self.sidebar_collapsed:
+            self._set_sidebar_collapsed(False)
+
+    def _set_sidebar_collapsed(self, collapsed: bool) -> None:
+        self.sidebar_collapsed = collapsed
+        self.nav_panel.setFixedWidth(68 if collapsed else 248)
+        nav_layout = self.nav_panel.layout()
+        nav_layout.setContentsMargins(7 if collapsed else 14, 14 if collapsed else 20, 7 if collapsed else 14, 12 if collapsed else 16)
+        nav_layout.setSpacing(7)
+        self.brand_text_widget.setVisible(not collapsed)
+        self.sidebar_toggle.setVisible(not collapsed)
+        self.nav_caption.setVisible(not collapsed)
+        self.status_card.setVisible(not collapsed)
+        self.brand_logo_button.setToolTip("Нажми, чтобы развернуть панель" if collapsed else "Lumi AI")
+        for button in self.nav_buttons.values():
+            label = str(button.property("navLabel"))
+            button.setText("" if collapsed else label)
+            button.setToolTip(label if collapsed else "")
+            button.setStyleSheet("text-align: center; padding: 10px 4px;" if collapsed else "")
 
     def _page_heading(self, title: str, subtitle: str) -> QVBoxLayout:
         layout = QVBoxLayout()
@@ -288,6 +344,17 @@ class LumiWindow(QMainWindow):
         self.body_edit = QTextEdit()
         self.body_edit.setPlaceholderText("Запиши сюда идею, план или важную информацию…")
         edit_layout.addWidget(self.title_edit)
+        checklist_toolbar = QHBoxLayout()
+        add_checklist_button = QPushButton("☷  Добавить блок задач")
+        add_checklist_button.setToolTip("Вставить список задач с чекбоксами в заметку")
+        add_checklist_button.clicked.connect(self._insert_checklist)
+        toggle_check_button = QPushButton("☑  Отметить / снять")
+        toggle_check_button.setToolTip("Переключить чекбокс в текущей строке")
+        toggle_check_button.clicked.connect(self._toggle_current_checkbox)
+        checklist_toolbar.addWidget(add_checklist_button)
+        checklist_toolbar.addWidget(toggle_check_button)
+        checklist_toolbar.addStretch(1)
+        edit_layout.addLayout(checklist_toolbar)
         edit_layout.addWidget(self.body_edit, 1)
         self.status = QLabel("Заметки сохраняются на этом компьютере.")
         self.status.setObjectName("muted")
@@ -416,12 +483,17 @@ class LumiWindow(QMainWindow):
         updates_title.setObjectName("section")
         updates_layout.addWidget(updates_title)
         updates_description = QLabel(
-            "Проверка обновлений находится в настройках, а не в верхней панели. "
-            "Автообновление ещё не подключено."
+            "Lumi проверяет только последние стабильные релизы GitHub. Бета-сборки "
+            "не предлагаются обновлятором. При обновлении откроется отдельное окно "
+            "с этапами проверки, загрузки и установки."
         )
         updates_description.setObjectName("pageSubtitle")
         updates_description.setWordWrap(True)
         updates_layout.addWidget(updates_description)
+
+        current_version = QLabel(f"Установленная версия: {installed_version()}")
+        current_version.setObjectName("muted")
+        updates_layout.addWidget(current_version)
 
         update_button = QPushButton("Проверить обновления")
         update_button.setObjectName("primaryButton")
@@ -531,6 +603,29 @@ class LumiWindow(QMainWindow):
         self.body_edit.clear()
         self.title_edit.setFocus()
         self.status.setText("Новая заметка")
+
+    def _insert_checklist(self) -> None:
+        cursor = self.body_edit.textCursor()
+        text_before = self.body_edit.toPlainText()[:cursor.position()]
+        if text_before and not text_before.endswith("\n"):
+            cursor.insertText("\n")
+        cursor.insertText("☐ Задача 1\n☐ Задача 2\n☐ Задача 3")
+        self.body_edit.setTextCursor(cursor)
+        self.body_edit.setFocus()
+
+    def _toggle_current_checkbox(self) -> None:
+        cursor = self.body_edit.textCursor()
+        cursor.select(QTextCursor.SelectionType.LineUnderCursor)
+        line = cursor.selectedText()
+        if line.startswith("☐ "):
+            updated = "☑ " + line[2:]
+        elif line.startswith("☑ "):
+            updated = "☐ " + line[2:]
+        else:
+            updated = "☐ " + line
+        cursor.insertText(updated)
+        self.body_edit.setTextCursor(cursor)
+        self.body_edit.setFocus()
 
     def _save_note(self) -> None:
         note_id = self.store.save_note(
