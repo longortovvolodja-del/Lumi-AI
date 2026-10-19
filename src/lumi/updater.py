@@ -178,7 +178,7 @@ class UpdaterWindow(QMainWindow):
         self.worker: UpdateWorker | None = None
         self.setWindowTitle("Lumi AI — обновление")
         self.setFixedSize(520, 340)
-        icon = install_dir / "lumi-app-icon.png"
+        icon = install_dir / "assets" / "lumi-app-icon.png"
         if icon.is_file():
             self.setWindowIcon(QIcon(str(icon)))
         self.setStyleSheet("""
@@ -226,7 +226,7 @@ class UpdaterWindow(QMainWindow):
         buttons.addWidget(self.update_button)
         self.close_button = QPushButton("Закрыть")
         self.close_button.setVisible(False)
-        self.close_button.clicked.connect(self.close)
+        self.close_button.clicked.connect(self.close_and_return)
         buttons.addWidget(self.close_button)
         layout.addLayout(buttons)
         self.setCentralWidget(root)
@@ -271,6 +271,7 @@ class UpdaterWindow(QMainWindow):
             self.status_label.setText(f"Lumi AI {installed} уже является последней стабильной версией.")
             self.progress.setRange(0, 100)
             self.progress.setValue(100)
+            self.close_button.setText("Вернуться в Lumi AI")
             self.close_button.setVisible(True)
 
     def on_failed(self, message: str) -> None:
@@ -278,6 +279,7 @@ class UpdaterWindow(QMainWindow):
         self.status_label.setText(message)
         self.progress.setRange(0, 100)
         self.progress.setValue(0)
+        self.close_button.setText("Вернуться в Lumi AI")
         self.close_button.setVisible(True)
 
     def begin_install(self) -> None:
@@ -309,13 +311,20 @@ class UpdaterWindow(QMainWindow):
             self.update_started = False
             self.update_button.setEnabled(True)
 
-    def launch_app_and_close(self) -> None:
+    def close_and_return(self) -> None:
+        self.launch_app()
+        self.close()
+
+    def launch_app(self) -> None:
         app_exe = self.install_dir / APP_EXE
         try:
             if app_exe.is_file():
                 subprocess.Popen([str(app_exe)], cwd=str(self.install_dir))
         except OSError as exc:
-            QMessageBox.warning(self, "Lumi AI", f"Обновление установлено, но Lumi не удалось запустить автоматически:\\n{exc}")
+            QMessageBox.warning(self, "Lumi AI", f"Не удалось запустить Lumi AI:\\n{exc}")
+
+    def launch_app_and_close(self) -> None:
+        self.launch_app()
         self.close()
 
 
