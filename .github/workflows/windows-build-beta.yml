@@ -83,7 +83,8 @@ jobs:
         shell: pwsh
         run: |
           $version = "${{ inputs.version }}"
-          Set-Content -Path dist/Lumi/version.txt -Value $version -Encoding ascii
+          $betaNumber = "${{ inputs.beta_number }}"
+          Set-Content -Path dist/Lumi/version.txt -Value "$version-beta.$betaNumber" -Encoding ascii
 
       - name: Build Lumi updater
         run: >
