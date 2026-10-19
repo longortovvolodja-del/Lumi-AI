@@ -47,7 +47,7 @@ class InstallerWindow(QMainWindow):
         if icon_path.is_file():
             self.setWindowIcon(QIcon(str(icon_path)))
         self.setStyleSheet("""
-            QMainWindow, QWidget { background: #070d20; color: #eaf3ff; }
+            QMainWindow, QWidget { background: #01071B; color: #eaf3ff; }
             QLabel { color: #eaf3ff; }
             QLabel#muted { color: #9eb4d6; }
             QLabel#brand { color: #ffffff; font-size: 25px; font-weight: 800; }
@@ -316,6 +316,20 @@ class InstallerWindow(QMainWindow):
         target = Path(raw_dir).expanduser()
         if not target.is_absolute():
             QMessageBox.warning(self, "Lumi AI", "Путь установки должен быть абсолютным.")
+            return
+
+        # Treat the chosen path as the parent location unless the user already
+        # selected a folder named "Lumi AI". This prevents installing loose
+        # files directly into a drive root such as D:\\.
+        if target.name.casefold() != APP_NAME.casefold():
+            target = target / APP_NAME
+        try:
+            target.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            QMessageBox.critical(
+                self, "Lumi AI",
+                f"Не удалось создать папку установки:\n{target}\n\n{exc}",
+            )
             return
         self.install_target = target
         self.go_to_step(2)
