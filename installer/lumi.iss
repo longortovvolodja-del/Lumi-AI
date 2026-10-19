@@ -1,6 +1,6 @@
 ; Lumi AI Windows installer (Inno Setup)
 #ifndef AppVersion
-  #define AppVersion "0.1.1"
+  #define AppVersion "0.1.7"
 #endif
 
 [Setup]
