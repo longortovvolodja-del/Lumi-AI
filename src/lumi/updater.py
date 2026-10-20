@@ -251,20 +251,21 @@ class UpdaterWindow(QMainWindow):
         self.worker_thread: QThread | None = None
         self.worker: UpdateWorker | None = None
         self.setWindowTitle("Lumi AI — обновление")
-        self.setFixedSize(520, 340)
+        self.setMinimumSize(520, 420)
+        self.resize(560, 460)
         icon = install_dir / "assets" / "lumi-app-icon.png"
         if icon.is_file():
             self.setWindowIcon(QIcon(str(icon)))
         self.setStyleSheet("""
-            QMainWindow, QWidget { background: #080d20; color: #edf4ff; }
-            QLabel#brand { font-size: 22px; font-weight: 800; color: #65e8ff; }
+            QMainWindow, QWidget { background: #080B14; color: #edf4ff; }
+            QLabel#brand { font-size: 22px; font-weight: 800; color: #12D7F5; }
             QLabel#muted { color: #9eb1d0; }
-            QFrame#panel { background: #0c1730; border: 1px solid #1d3d6b; border-radius: 16px; }
-            QProgressBar { background: #071126; border: 1px solid #244b82; border-radius: 7px; min-height: 15px; text-align: center; }
-            QProgressBar::chunk { border-radius: 6px; background: #12cfff; }
-            QPushButton { background: #10264b; border: 1px solid #28558d; border-radius: 9px; padding: 9px 16px; }
-            QPushButton#primary { background: #174ff5; border-color: #63eaff; font-weight: 700; }
-            QPushButton:disabled { color: #6f82a4; background: #101a30; }
+            QFrame#panel { background: #101626; border: 1px solid #202b42; border-radius: 16px; }
+            QProgressBar { background: #030E30; border: 1px solid #2454F5; border-radius: 7px; min-height: 15px; text-align: center; }
+            QProgressBar::chunk { border-radius: 6px; background: #12D7F5; }
+            QPushButton { background: #101626; border: 1px solid #2454F5; border-radius: 9px; padding: 9px 16px; }
+            QPushButton#primary { background: #2454F5; border-color: #12D7F5; font-weight: 700; }
+            QPushButton:disabled { color: #6f82a4; background: #101626; }
         """)
         root = QWidget()
         layout = QVBoxLayout(root)
