@@ -40,14 +40,48 @@ def _http(url: str, *, timeout: int = 30) -> bytes:
         return response.read()
 
 
+def _shortcut_targets() -> list[Path]:
+    """Resolve Lumi shortcuts from Desktop and Start Menu using Windows Script Host."""
+    import subprocess
+
+    folders = [
+        Path(os.environ.get("USERPROFILE", str(Path.home()))) / "Desktop",
+        Path(os.environ.get("APPDATA", "")) / "Microsoft/Windows/Start Menu/Programs",
+        Path(os.environ.get("PROGRAMDATA", "")) / "Microsoft/Windows/Start Menu/Programs",
+    ]
+    targets: list[Path] = []
+    script = (
+        '$w=New-Object -ComObject WScript.Shell; '
+        'Get-ChildItem -LiteralPath $args[0] -Filter *.lnk -Recurse -ErrorAction SilentlyContinue | '
+        'ForEach-Object { try { $s=$w.CreateShortcut($_.FullName); '
+        'if ([IO.Path]::GetFileName($s.TargetPath) -ieq "Lumi.exe") { $s.TargetPath } } catch {} }'
+    )
+    for folder in folders:
+        if not folder.is_dir():
+            continue
+        try:
+            result = subprocess.run(
+                ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command",
+                 script, str(folder)],
+                capture_output=True, text=True, timeout=8, check=False,
+            )
+            for line in result.stdout.splitlines():
+                candidate = Path(line.strip())
+                if candidate.name.lower() == APP_EXE.lower() and candidate.is_file():
+                    targets.append(candidate.resolve().parent)
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+    return targets
+
+
 def _installed_program() -> tuple[Path | None, str | None]:
-    """Find the installed Lumi directory without depending on registry state."""
+    """Find Lumi by uninstall metadata, shortcuts, and common install roots."""
     import winreg
 
     roots = (
-        (winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Uninstall"),
-        (winreg.HKEY_LOCAL_MACHINE, r"Software\Microsoft\Windows\CurrentVersion\Uninstall"),
-        (winreg.HKEY_LOCAL_MACHINE, r"Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall"),
+        (winreg.HKEY_CURRENT_USER, r"Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall"),
+        (winreg.HKEY_LOCAL_MACHINE, r"Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall"),
+        (winreg.HKEY_LOCAL_MACHINE, r"Software\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall"),
     )
     for hive, root in roots:
         try:
@@ -55,21 +89,42 @@ def _installed_program() -> tuple[Path | None, str | None]:
                 for index in range(winreg.QueryInfoKey(key)[0]):
                     try:
                         with winreg.OpenKey(key, winreg.EnumKey(key, index)) as subkey:
-                            name = winreg.QueryValueEx(subkey, "DisplayName")[0]
+                            name = str(winreg.QueryValueEx(subkey, "DisplayName")[0])
                             if name != APP_NAME and not name.startswith(APP_NAME + " "):
                                 continue
                             try:
-                                location = Path(winreg.QueryValueEx(subkey, "InstallLocation")[0])
+                                raw = str(winreg.QueryValueEx(subkey, "InstallLocation")[0]).strip()
                             except OSError:
-                                location = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "Programs" / APP_NAME
-                            if (location / APP_EXE).is_file():
-                                return location, None
+                                raw = ""
+                            if raw:
+                                location = Path(os.path.expandvars(raw))
+                                if (location / APP_EXE).is_file():
+                                    return location, None
+                            try:
+                                command = str(winreg.QueryValueEx(subkey, "DisplayIcon")[0]).strip().strip('"')
+                                icon_path = Path(command.split(",")[0])
+                                if icon_path.name.lower() == APP_EXE.lower() and icon_path.is_file():
+                                    return icon_path.resolve().parent, None
+                            except (OSError, ValueError):
+                                pass
                     except OSError:
                         continue
         except OSError:
             continue
-    default = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "Programs" / APP_NAME
-    return (default, None) if (default / APP_EXE).is_file() else (None, None)
+
+    for location in _shortcut_targets():
+        if (location / APP_EXE).is_file():
+            return location, None
+
+    roots_to_check = [
+        Path(os.environ.get("LOCALAPPDATA", Path.home())) / "Programs" / APP_NAME,
+        Path(os.environ.get("PROGRAMFILES", "C:/Program Files")) / APP_NAME,
+        Path(os.environ.get("PROGRAMFILES(X86)", "C:/Program Files (x86)")) / APP_NAME,
+    ]
+    for location in roots_to_check:
+        if (location / APP_EXE).is_file():
+            return location, None
+    return None, None
 
 
 def _version_key(value: str) -> tuple[int, ...]:
