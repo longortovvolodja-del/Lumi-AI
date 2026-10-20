@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from datetime import datetime
 import os
 import re
 import shutil
@@ -20,7 +21,7 @@ from PySide6.QtCore import QObject, QThread, QTimer, Signal, Qt
 from PySide6.QtGui import QFont, QIcon
 from PySide6.QtWidgets import (
     QApplication, QFrame, QHBoxLayout, QLabel, QMainWindow, QMessageBox,
-    QProgressBar, QPushButton, QVBoxLayout, QWidget,
+    QProgressBar, QPushButton, QPlainTextEdit, QVBoxLayout, QWidget,
 )
 import urllib.error
 import urllib.request
@@ -304,7 +305,19 @@ class UpdaterWindow(QMainWindow):
         self.close_button.clicked.connect(self.close_and_return)
         buttons.addWidget(self.close_button)
         layout.addLayout(buttons)
+        self.details_button = QPushButton("Подробнее  ▾")
+        self.details_button.setCheckable(True)
+        self.details_button.toggled.connect(self.toggle_details)
+        layout.addWidget(self.details_button)
+        self.log_view = QPlainTextEdit()
+        self.log_view.setReadOnly(True)
+        self.log_view.setMaximumBlockCount(500)
+        self.log_view.setPlaceholderText("Здесь появятся этапы проверки и обновления…")
+        self.log_view.setStyleSheet("QPlainTextEdit { background: #030E30; color: #9fefff; border: 1px solid #202b42; border-radius: 8px; padding: 8px; font-family: Consolas; font-size: 10px; }")
+        self.log_view.setVisible(False)
+        layout.addWidget(self.log_view)
         self.setCentralWidget(root)
+        self.log("Обновлятор запущен.")
         QTimer.singleShot(150, self.check_latest)
 
     def start_worker(self, *, install: bool) -> None:
@@ -312,7 +325,7 @@ class UpdaterWindow(QMainWindow):
         self.worker = UpdateWorker(self.install_dir, install=install)
         self.worker.moveToThread(self.worker_thread)
         self.worker_thread.started.connect(self.worker.run)
-        self.worker.status.connect(self.status_label.setText)
+        self.worker.status.connect(self.on_status)
         self.worker.progress.connect(self.progress.setValue)
         self.worker.checked.connect(self.on_checked)
         self.worker.failed.connect(self.on_failed)
@@ -320,6 +333,19 @@ class UpdaterWindow(QMainWindow):
         self.worker.finished.connect(self.worker.deleteLater)
         self.worker_thread.finished.connect(self.on_worker_finished)
         self.worker_thread.start()
+
+    def log(self, message: str) -> None:
+        stamp = datetime.now().strftime("%H:%M:%S")
+        self.log_view.appendPlainText(f"[{stamp}] {message}")
+
+    def on_status(self, message: str) -> None:
+        self.status_label.setText(message)
+        self.log(message)
+
+    def toggle_details(self, expanded: bool) -> None:
+        self.log_view.setVisible(expanded)
+        self.details_button.setText("Подробнее  ▴" if expanded else "Подробнее  ▾")
+        self.resize(560, 620 if expanded else 460)
 
     def check_latest(self) -> None:
         self.update_button.setVisible(False)
@@ -330,6 +356,7 @@ class UpdaterWindow(QMainWindow):
         self.start_worker(install=False)
 
     def on_checked(self, installed: str, latest: str, available: bool) -> None:
+        self.log(f"Версии: установлена {installed}; последняя стабильная {latest}; обновление нужно: {'да' if available else 'нет'}.")
         self.latest_version = latest
         self.update_available = available
         self.version_label.setText(f"Установлена: {installed}    Последняя стабильная: {latest}")
@@ -350,6 +377,7 @@ class UpdaterWindow(QMainWindow):
             self.close_button.setVisible(True)
 
     def on_failed(self, message: str) -> None:
+        self.log("ОШИБКА: " + message)
         self.heading.setText("Не удалось выполнить обновление")
         self.status_label.setText(message)
         self.progress.setRange(0, 100)
@@ -358,6 +386,7 @@ class UpdaterWindow(QMainWindow):
         self.close_button.setVisible(True)
 
     def begin_install(self) -> None:
+        self.log("Пользователь запустил установку обновления.")
         if self.update_started:
             return
         self.update_started = True
