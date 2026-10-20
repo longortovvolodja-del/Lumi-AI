@@ -143,8 +143,15 @@ class UpdateWorker(QObject):
             installer_path.write_bytes(data)
             self.progress.emit(72)
             self.status.emit("Запускаем установку стабильной версии…")
+            # Tell the branded bootstrapper to bypass its interactive wizard,
+            # install into the detected existing directory, and leave app launch to this updater.
             result = subprocess.run(
-                [str(installer_path), "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-"],
+                [
+                    str(installer_path),
+                    "--silent-update",
+                    "--install-dir",
+                    str(self.install_dir),
+                ],
                 check=False,
             )
             try:
