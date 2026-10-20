@@ -18,7 +18,7 @@ import tempfile
 from pathlib import Path
 
 from PySide6.QtCore import QObject, QThread, QTimer, Signal, Qt
-from PySide6.QtGui import QFont, QIcon
+from PySide6.QtGui import QFont, QIcon, QPixmap
 from PySide6.QtWidgets import (
     QApplication, QFrame, QHBoxLayout, QLabel, QMainWindow, QMessageBox,
     QProgressBar, QPushButton, QPlainTextEdit, QVBoxLayout, QWidget,
@@ -272,9 +272,27 @@ class UpdaterWindow(QMainWindow):
         layout = QVBoxLayout(root)
         layout.setContentsMargins(22, 20, 22, 20)
         layout.setSpacing(12)
-        title = QLabel("LUMI <span style='color:#b68cff'>AI</span>")
-        title.setObjectName("brand")
-        layout.addWidget(title)
+        brand_row = QHBoxLayout()
+        app_icon_path = install_dir / "assets" / "lumi-app-icon.png"
+        if app_icon_path.is_file():
+            app_icon_label = QLabel()
+            app_pixmap = QPixmap(str(app_icon_path))
+            if not app_pixmap.isNull():
+                app_icon_label.setPixmap(app_pixmap.scaled(42, 42, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+                brand_row.addWidget(app_icon_label)
+        logo_path = install_dir / "assets" / "lumi-ai-logo.png"
+        if logo_path.is_file():
+            logo_label = QLabel()
+            logo_pixmap = QPixmap(str(logo_path))
+            if not logo_pixmap.isNull():
+                logo_label.setPixmap(logo_pixmap.scaledToHeight(42, Qt.SmoothTransformation))
+                brand_row.addWidget(logo_label)
+        else:
+            title = QLabel("LUMI <span style='color:#12D7F5'>AI</span>")
+            title.setObjectName("brand")
+            brand_row.addWidget(title)
+        brand_row.addStretch()
+        layout.addLayout(brand_row)
         panel = QFrame()
         panel.setObjectName("panel")
         inside = QVBoxLayout(panel)
