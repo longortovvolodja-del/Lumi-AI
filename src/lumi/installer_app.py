@@ -36,6 +36,46 @@ def version_text() -> str:
         return "0.1.8"
 
 
+def run_silent_update(args: list[str]) -> int | None:
+    """Run the bundled Inno Setup engine without opening the branded wizard.
+
+    Returns an exit code when silent-update mode was requested, otherwise None
+    so a normal first-time installation can continue to the graphical wizard.
+    """
+    if "--silent-update" not in args:
+        return None
+
+    try:
+        option_index = args.index("--install-dir")
+        target_text = args[option_index + 1]
+    except (ValueError, IndexError):
+        return 2
+
+    target = Path(target_text).expanduser()
+    if not target.is_absolute():
+        return 2
+
+    internal_setup = resource_path("payload", "Lumi-Internal-Setup.exe")
+    if not internal_setup.is_file():
+        return 3
+
+    # In silent mode Inno Setup skips its post-install app launch; the updater
+    # starts Lumi.exe once after this process reports success.
+    result = subprocess.run(
+        [
+            str(internal_setup),
+            "/VERYSILENT",
+            "/SUPPRESSMSGBOXES",
+            "/NORESTART",
+            "/SP-",
+            f"/DIR={target}",
+            "/LOG",
+        ],
+        check=False,
+    )
+    return result.returncode
+
+
 class InstallerWindow(QMainWindow):
     """Centered multi-step installer with a persistent left artwork panel."""
 
@@ -431,6 +471,11 @@ class InstallerWindow(QMainWindow):
         self.close()
 
 def main() -> int:
+    # Updater handoff: install in place without showing the interactive wizard.
+    silent_result = run_silent_update(sys.argv[1:])
+    if silent_result is not None:
+        return silent_result
+
     app = QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
     app.setStyle("Fusion")
