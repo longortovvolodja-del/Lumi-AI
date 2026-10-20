@@ -174,7 +174,7 @@ class UpdateWorker(QObject):
             if not installer or not checksums:
                 raise RuntimeError("В стабильном релизе нет установщика или SHA256SUMS.txt.")
 
-            self.status.emit("Загружаем установщик обновления… Это может занять несколько минут.")
+            self.status.emit("Скачиваем контрольную сумму установщика…")
             self.progress.emit(18)
             installer_name = installer["name"]
             checksum_text = _http(checksums["browser_download_url"], timeout=60).decode("utf-8", errors="replace")
@@ -187,6 +187,7 @@ class UpdateWorker(QObject):
             if not expected or not re.fullmatch(r"[0-9a-f]{64}", expected):
                 raise RuntimeError("Не удалось найти корректную SHA-256 контрольную сумму.")
 
+            self.status.emit("Скачиваем файл установщика с GitHub Releases…")
             data = _http(installer["browser_download_url"], timeout=300)
             self.progress.emit(62)
             self.status.emit("Проверяем целостность загруженного файла…")
@@ -218,6 +219,13 @@ class UpdateWorker(QObject):
             self.progress.emit(100)
             self.status.emit(f"Lumi AI успешно обновлена до версии {latest}.")
             self.checked.emit(installed, latest, True)
+            self.finished.emit()
+        except TimeoutError as exc:
+            self.failed.emit("Загрузка с GitHub превысила лимит ожидания. Проверь соединение и повтори попытку.")
+            self.finished.emit()
+        except urllib.error.URLError as exc:
+            reason = getattr(exc, "reason", exc)
+            self.failed.emit(f"Не удалось подключиться к GitHub для загрузки: {reason}")
             self.finished.emit()
         except urllib.error.HTTPError as exc:
             if exc.code == 404:
