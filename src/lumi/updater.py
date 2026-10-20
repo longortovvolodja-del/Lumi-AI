@@ -31,7 +31,7 @@ APP_NAME = "Lumi AI"
 APP_EXE = "Lumi.exe"
 
 
-def _http(url: str, *, timeout: int = 30) -> bytes:
+def _http(url: str, *, timeout: int = 180) -> bytes:
     request = urllib.request.Request(
         url,
         headers={"User-Agent": "Lumi-AI-Updater", "Accept": "application/vnd.github+json"},
@@ -174,10 +174,10 @@ class UpdateWorker(QObject):
             if not installer or not checksums:
                 raise RuntimeError("В стабильном релизе нет установщика или SHA256SUMS.txt.")
 
-            self.status.emit("Загружаем установщик обновления…")
+            self.status.emit("Загружаем установщик обновления… Это может занять несколько минут.")
             self.progress.emit(18)
             installer_name = installer["name"]
-            checksum_text = _http(checksums["browser_download_url"]).decode("utf-8", errors="replace")
+            checksum_text = _http(checksums["browser_download_url"], timeout=60).decode("utf-8", errors="replace")
             expected = None
             for line in checksum_text.splitlines():
                 parts = line.strip().split()
@@ -187,7 +187,7 @@ class UpdateWorker(QObject):
             if not expected or not re.fullmatch(r"[0-9a-f]{64}", expected):
                 raise RuntimeError("Не удалось найти корректную SHA-256 контрольную сумму.")
 
-            data = _http(installer["browser_download_url"], timeout=180)
+            data = _http(installer["browser_download_url"], timeout=300)
             self.progress.emit(62)
             self.status.emit("Проверяем целостность загруженного файла…")
             if hashlib.sha256(data).hexdigest() != expected:
