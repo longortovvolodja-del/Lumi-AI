@@ -32,13 +32,29 @@ APP_NAME = "Lumi AI"
 APP_EXE = "Lumi.exe"
 
 
-def _http(url: str, *, timeout: int = 180) -> bytes:
+def _http(url: str, *, timeout: int = 180, attempts: int = 3) -> bytes:
+    """Fetch a GitHub API/release resource, retrying transient connection resets."""
     request = urllib.request.Request(
         url,
-        headers={"User-Agent": "Lumi-AI-Updater", "Accept": "application/vnd.github+json"},
+        headers={
+            "User-Agent": "Lumi-AI-Updater",
+            "Accept": "application/vnd.github+json",
+            "Connection": "close",
+        },
     )
-    with urllib.request.urlopen(request, timeout=timeout) as response:
-        return response.read()
+    last_error: Exception | None = None
+    for attempt in range(attempts):
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                return response.read()
+        except (urllib.error.URLError, TimeoutError, ConnectionError, OSError) as exc:
+            last_error = exc
+            if attempt + 1 < attempts:
+                import time
+                time.sleep(1.5 * (attempt + 1))
+    if last_error is not None:
+        raise last_error
+    raise RuntimeError("Не удалось загрузить файл с GitHub.")
 
 
 def _shortcut_targets() -> list[Path]:
