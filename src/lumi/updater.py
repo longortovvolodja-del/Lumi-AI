@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from datetime import datetime
 import os
 import re
 import shutil
@@ -17,10 +18,10 @@ import tempfile
 from pathlib import Path
 
 from PySide6.QtCore import QObject, QThread, QTimer, Signal, Qt
-from PySide6.QtGui import QFont, QIcon
+from PySide6.QtGui import QFont, QIcon, QPixmap
 from PySide6.QtWidgets import (
     QApplication, QFrame, QHBoxLayout, QLabel, QMainWindow, QMessageBox,
-    QProgressBar, QPushButton, QVBoxLayout, QWidget,
+    QProgressBar, QPushButton, QPlainTextEdit, QVBoxLayout, QWidget,
 )
 import urllib.error
 import urllib.request
@@ -31,7 +32,7 @@ APP_NAME = "Lumi AI"
 APP_EXE = "Lumi.exe"
 
 
-def _http(url: str, *, timeout: int = 30) -> bytes:
+def _http(url: str, *, timeout: int = 180) -> bytes:
     request = urllib.request.Request(
         url,
         headers={"User-Agent": "Lumi-AI-Updater", "Accept": "application/vnd.github+json"},
@@ -40,14 +41,48 @@ def _http(url: str, *, timeout: int = 30) -> bytes:
         return response.read()
 
 
+def _shortcut_targets() -> list[Path]:
+    """Resolve Lumi shortcuts from Desktop and Start Menu using Windows Script Host."""
+    import subprocess
+
+    folders = [
+        Path(os.environ.get("USERPROFILE", str(Path.home()))) / "Desktop",
+        Path(os.environ.get("APPDATA", "")) / "Microsoft/Windows/Start Menu/Programs",
+        Path(os.environ.get("PROGRAMDATA", "")) / "Microsoft/Windows/Start Menu/Programs",
+    ]
+    targets: list[Path] = []
+    script = (
+        '$w=New-Object -ComObject WScript.Shell; '
+        'Get-ChildItem -LiteralPath $args[0] -Filter *.lnk -Recurse -ErrorAction SilentlyContinue | '
+        'ForEach-Object { try { $s=$w.CreateShortcut($_.FullName); '
+        'if ([IO.Path]::GetFileName($s.TargetPath) -ieq "Lumi.exe") { $s.TargetPath } } catch {} }'
+    )
+    for folder in folders:
+        if not folder.is_dir():
+            continue
+        try:
+            result = subprocess.run(
+                ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command",
+                 script, str(folder)],
+                capture_output=True, text=True, timeout=8, check=False,
+            )
+            for line in result.stdout.splitlines():
+                candidate = Path(line.strip())
+                if candidate.name.lower() == APP_EXE.lower() and candidate.is_file():
+                    targets.append(candidate.resolve().parent)
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+    return targets
+
+
 def _installed_program() -> tuple[Path | None, str | None]:
-    """Find the installed Lumi directory without depending on registry state."""
+    """Find Lumi by uninstall metadata, shortcuts, and common install roots."""
     import winreg
 
     roots = (
-        (winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Uninstall"),
-        (winreg.HKEY_LOCAL_MACHINE, r"Software\Microsoft\Windows\CurrentVersion\Uninstall"),
-        (winreg.HKEY_LOCAL_MACHINE, r"Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall"),
+        (winreg.HKEY_CURRENT_USER, r"Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall"),
+        (winreg.HKEY_LOCAL_MACHINE, r"Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall"),
+        (winreg.HKEY_LOCAL_MACHINE, r"Software\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall"),
     )
     for hive, root in roots:
         try:
@@ -55,21 +90,42 @@ def _installed_program() -> tuple[Path | None, str | None]:
                 for index in range(winreg.QueryInfoKey(key)[0]):
                     try:
                         with winreg.OpenKey(key, winreg.EnumKey(key, index)) as subkey:
-                            name = winreg.QueryValueEx(subkey, "DisplayName")[0]
+                            name = str(winreg.QueryValueEx(subkey, "DisplayName")[0])
                             if name != APP_NAME and not name.startswith(APP_NAME + " "):
                                 continue
                             try:
-                                location = Path(winreg.QueryValueEx(subkey, "InstallLocation")[0])
+                                raw = str(winreg.QueryValueEx(subkey, "InstallLocation")[0]).strip()
                             except OSError:
-                                location = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "Programs" / APP_NAME
-                            if (location / APP_EXE).is_file():
-                                return location, None
+                                raw = ""
+                            if raw:
+                                location = Path(os.path.expandvars(raw))
+                                if (location / APP_EXE).is_file():
+                                    return location, None
+                            try:
+                                command = str(winreg.QueryValueEx(subkey, "DisplayIcon")[0]).strip().strip('"')
+                                icon_path = Path(command.split(",")[0])
+                                if icon_path.name.lower() == APP_EXE.lower() and icon_path.is_file():
+                                    return icon_path.resolve().parent, None
+                            except (OSError, ValueError):
+                                pass
                     except OSError:
                         continue
         except OSError:
             continue
-    default = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "Programs" / APP_NAME
-    return (default, None) if (default / APP_EXE).is_file() else (None, None)
+
+    for location in _shortcut_targets():
+        if (location / APP_EXE).is_file():
+            return location, None
+
+    roots_to_check = [
+        Path(os.environ.get("LOCALAPPDATA", Path.home())) / "Programs" / APP_NAME,
+        Path(os.environ.get("PROGRAMFILES", "C:/Program Files")) / APP_NAME,
+        Path(os.environ.get("PROGRAMFILES(X86)", "C:/Program Files (x86)")) / APP_NAME,
+    ]
+    for location in roots_to_check:
+        if (location / APP_EXE).is_file():
+            return location, None
+    return None, None
 
 
 def _version_key(value: str) -> tuple[int, ...]:
@@ -119,10 +175,10 @@ class UpdateWorker(QObject):
             if not installer or not checksums:
                 raise RuntimeError("В стабильном релизе нет установщика или SHA256SUMS.txt.")
 
-            self.status.emit("Загружаем установщик обновления…")
+            self.status.emit("Скачиваем контрольную сумму установщика…")
             self.progress.emit(18)
             installer_name = installer["name"]
-            checksum_text = _http(checksums["browser_download_url"]).decode("utf-8", errors="replace")
+            checksum_text = _http(checksums["browser_download_url"], timeout=60).decode("utf-8", errors="replace")
             expected = None
             for line in checksum_text.splitlines():
                 parts = line.strip().split()
@@ -132,7 +188,8 @@ class UpdateWorker(QObject):
             if not expected or not re.fullmatch(r"[0-9a-f]{64}", expected):
                 raise RuntimeError("Не удалось найти корректную SHA-256 контрольную сумму.")
 
-            data = _http(installer["browser_download_url"], timeout=180)
+            self.status.emit("Скачиваем файл установщика с GitHub Releases…")
+            data = _http(installer["browser_download_url"], timeout=300)
             self.progress.emit(62)
             self.status.emit("Проверяем целостность загруженного файла…")
             if hashlib.sha256(data).hexdigest() != expected:
@@ -143,8 +200,15 @@ class UpdateWorker(QObject):
             installer_path.write_bytes(data)
             self.progress.emit(72)
             self.status.emit("Запускаем установку стабильной версии…")
+            # Tell the branded bootstrapper to bypass its interactive wizard,
+            # install into the detected existing directory, and leave app launch to this updater.
             result = subprocess.run(
-                [str(installer_path), "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-"],
+                [
+                    str(installer_path),
+                    "--silent-update",
+                    "--install-dir",
+                    str(self.install_dir),
+                ],
                 check=False,
             )
             try:
@@ -156,6 +220,13 @@ class UpdateWorker(QObject):
             self.progress.emit(100)
             self.status.emit(f"Lumi AI успешно обновлена до версии {latest}.")
             self.checked.emit(installed, latest, True)
+            self.finished.emit()
+        except TimeoutError as exc:
+            self.failed.emit("Загрузка с GitHub превысила лимит ожидания. Проверь соединение и повтори попытку.")
+            self.finished.emit()
+        except urllib.error.URLError as exc:
+            reason = getattr(exc, "reason", exc)
+            self.failed.emit(f"Не удалось подключиться к GitHub для загрузки: {reason}")
             self.finished.emit()
         except urllib.error.HTTPError as exc:
             if exc.code == 404:
@@ -181,28 +252,47 @@ class UpdaterWindow(QMainWindow):
         self.worker_thread: QThread | None = None
         self.worker: UpdateWorker | None = None
         self.setWindowTitle("Lumi AI — обновление")
-        self.setFixedSize(520, 340)
+        self.setMinimumSize(520, 420)
+        self.resize(560, 460)
         icon = install_dir / "assets" / "lumi-app-icon.png"
         if icon.is_file():
             self.setWindowIcon(QIcon(str(icon)))
         self.setStyleSheet("""
-            QMainWindow, QWidget { background: #080d20; color: #edf4ff; }
-            QLabel#brand { font-size: 22px; font-weight: 800; color: #65e8ff; }
+            QMainWindow, QWidget { background: #080B14; color: #edf4ff; }
+            QLabel#brand { font-size: 22px; font-weight: 800; color: #12D7F5; }
             QLabel#muted { color: #9eb1d0; }
-            QFrame#panel { background: #0c1730; border: 1px solid #1d3d6b; border-radius: 16px; }
-            QProgressBar { background: #071126; border: 1px solid #244b82; border-radius: 7px; min-height: 15px; text-align: center; }
-            QProgressBar::chunk { border-radius: 6px; background: #12cfff; }
-            QPushButton { background: #10264b; border: 1px solid #28558d; border-radius: 9px; padding: 9px 16px; }
-            QPushButton#primary { background: #174ff5; border-color: #63eaff; font-weight: 700; }
-            QPushButton:disabled { color: #6f82a4; background: #101a30; }
+            QFrame#panel { background: #101626; border: 1px solid #202b42; border-radius: 16px; }
+            QProgressBar { background: #030E30; border: 1px solid #2454F5; border-radius: 7px; min-height: 15px; text-align: center; }
+            QProgressBar::chunk { border-radius: 6px; background: #12D7F5; }
+            QPushButton { background: #101626; border: 1px solid #2454F5; border-radius: 9px; padding: 9px 16px; }
+            QPushButton#primary { background: #2454F5; border-color: #12D7F5; font-weight: 700; }
+            QPushButton:disabled { color: #6f82a4; background: #101626; }
         """)
         root = QWidget()
         layout = QVBoxLayout(root)
         layout.setContentsMargins(22, 20, 22, 20)
         layout.setSpacing(12)
-        title = QLabel("LUMI <span style='color:#b68cff'>AI</span>")
-        title.setObjectName("brand")
-        layout.addWidget(title)
+        brand_row = QHBoxLayout()
+        app_icon_path = install_dir / "assets" / "lumi-app-icon.png"
+        if app_icon_path.is_file():
+            app_icon_label = QLabel()
+            app_pixmap = QPixmap(str(app_icon_path))
+            if not app_pixmap.isNull():
+                app_icon_label.setPixmap(app_pixmap.scaled(42, 42, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+                brand_row.addWidget(app_icon_label)
+        logo_path = install_dir / "assets" / "lumi-ai-logo.png"
+        if logo_path.is_file():
+            logo_label = QLabel()
+            logo_pixmap = QPixmap(str(logo_path))
+            if not logo_pixmap.isNull():
+                logo_label.setPixmap(logo_pixmap.scaledToHeight(42, Qt.SmoothTransformation))
+                brand_row.addWidget(logo_label)
+        else:
+            title = QLabel("LUMI <span style='color:#12D7F5'>AI</span>")
+            title.setObjectName("brand")
+            brand_row.addWidget(title)
+        brand_row.addStretch()
+        layout.addLayout(brand_row)
         panel = QFrame()
         panel.setObjectName("panel")
         inside = QVBoxLayout(panel)
@@ -233,7 +323,19 @@ class UpdaterWindow(QMainWindow):
         self.close_button.clicked.connect(self.close_and_return)
         buttons.addWidget(self.close_button)
         layout.addLayout(buttons)
+        self.details_button = QPushButton("Подробнее  ▾")
+        self.details_button.setCheckable(True)
+        self.details_button.toggled.connect(self.toggle_details)
+        layout.addWidget(self.details_button)
+        self.log_view = QPlainTextEdit()
+        self.log_view.setReadOnly(True)
+        self.log_view.setMaximumBlockCount(500)
+        self.log_view.setPlaceholderText("Здесь появятся этапы проверки и обновления…")
+        self.log_view.setStyleSheet("QPlainTextEdit { background: #030E30; color: #9fefff; border: 1px solid #202b42; border-radius: 8px; padding: 8px; font-family: Consolas; font-size: 10px; }")
+        self.log_view.setVisible(False)
+        layout.addWidget(self.log_view)
         self.setCentralWidget(root)
+        self.log("Обновлятор запущен.")
         QTimer.singleShot(150, self.check_latest)
 
     def start_worker(self, *, install: bool) -> None:
@@ -241,7 +343,7 @@ class UpdaterWindow(QMainWindow):
         self.worker = UpdateWorker(self.install_dir, install=install)
         self.worker.moveToThread(self.worker_thread)
         self.worker_thread.started.connect(self.worker.run)
-        self.worker.status.connect(self.status_label.setText)
+        self.worker.status.connect(self.on_status)
         self.worker.progress.connect(self.progress.setValue)
         self.worker.checked.connect(self.on_checked)
         self.worker.failed.connect(self.on_failed)
@@ -249,6 +351,19 @@ class UpdaterWindow(QMainWindow):
         self.worker.finished.connect(self.worker.deleteLater)
         self.worker_thread.finished.connect(self.on_worker_finished)
         self.worker_thread.start()
+
+    def log(self, message: str) -> None:
+        stamp = datetime.now().strftime("%H:%M:%S")
+        self.log_view.appendPlainText(f"[{stamp}] {message}")
+
+    def on_status(self, message: str) -> None:
+        self.status_label.setText(message)
+        self.log(message)
+
+    def toggle_details(self, expanded: bool) -> None:
+        self.log_view.setVisible(expanded)
+        self.details_button.setText("Подробнее  ▴" if expanded else "Подробнее  ▾")
+        self.resize(560, 620 if expanded else 460)
 
     def check_latest(self) -> None:
         self.update_button.setVisible(False)
@@ -259,6 +374,7 @@ class UpdaterWindow(QMainWindow):
         self.start_worker(install=False)
 
     def on_checked(self, installed: str, latest: str, available: bool) -> None:
+        self.log(f"Версии: установлена {installed}; последняя стабильная {latest}; обновление нужно: {'да' if available else 'нет'}.")
         self.latest_version = latest
         self.update_available = available
         self.version_label.setText(f"Установлена: {installed}    Последняя стабильная: {latest}")
@@ -279,6 +395,7 @@ class UpdaterWindow(QMainWindow):
             self.close_button.setVisible(True)
 
     def on_failed(self, message: str) -> None:
+        self.log("ОШИБКА: " + message)
         self.heading.setText("Не удалось выполнить обновление")
         self.status_label.setText(message)
         self.progress.setRange(0, 100)
@@ -287,6 +404,7 @@ class UpdaterWindow(QMainWindow):
         self.close_button.setVisible(True)
 
     def begin_install(self) -> None:
+        self.log("Пользователь запустил установку обновления.")
         if self.update_started:
             return
         self.update_started = True
