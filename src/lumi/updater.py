@@ -32,13 +32,29 @@ APP_NAME = "Lumi AI"
 APP_EXE = "Lumi.exe"
 
 
-def _http(url: str, *, timeout: int = 180) -> bytes:
+def _http(url: str, *, timeout: int = 180, attempts: int = 3) -> bytes:
+    """Fetch a GitHub API/release resource, retrying transient connection resets."""
     request = urllib.request.Request(
         url,
-        headers={"User-Agent": "Lumi-AI-Updater", "Accept": "application/vnd.github+json"},
+        headers={
+            "User-Agent": "Lumi-AI-Updater",
+            "Accept": "application/vnd.github+json",
+            "Connection": "close",
+        },
     )
-    with urllib.request.urlopen(request, timeout=timeout) as response:
-        return response.read()
+    last_error: Exception | None = None
+    for attempt in range(attempts):
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                return response.read()
+        except (urllib.error.URLError, TimeoutError, ConnectionError, OSError) as exc:
+            last_error = exc
+            if attempt + 1 < attempts:
+                import time
+                time.sleep(1.5 * (attempt + 1))
+    if last_error is not None:
+        raise last_error
+    raise RuntimeError("Не удалось загрузить файл с GitHub.")
 
 
 def _shortcut_targets() -> list[Path]:
@@ -151,13 +167,33 @@ class UpdateWorker(QObject):
             self.status.emit("Проверяем последнюю стабильную версию…")
             self.progress.emit(8)
             self.release = json.loads(_http(LATEST_API).decode("utf-8"))
-            latest = str(self.release.get("tag_name", "")).removeprefix("v")
+            latest = str(self.release.get("tag_name", "")).removeprefix("v").strip()
             version_path = self.install_dir / "version.txt"
             installed = version_path.read_text(encoding="utf-8").strip() if version_path.is_file() else "0.0.0"
+
+            # Prefer a semantic version in the release tag. Older releases may have
+            # been published with a sequence number as the tag (for example "19"),
+            # while the actual installer asset still contains the app version.
             if re.fullmatch(r"\d+\.\d+\.\d+", latest):
                 latest = f"{latest}.00"
             elif not re.fullmatch(r"\d+\.\d+\.\d+\.\d{1,5}", latest):
-                raise RuntimeError("GitHub вернул некорректную версию стабильного релиза.")
+                release_assets = self.release.get("assets", [])
+                version_candidates = []
+                for asset in release_assets:
+                    asset_name = str(asset.get("name", ""))
+                    match = re.search(r"Lumi-Setup-(\d+\.\d+\.\d+(?:\.\d{1,5})?)(?:-beta\.\d+)?\.exe$", asset_name, re.IGNORECASE)
+                    if match:
+                        version_candidates.append(match.group(1))
+                if version_candidates:
+                    latest = version_candidates[0]
+                    if re.fullmatch(r"\d+\.\d+\.\d+", latest):
+                        latest = f"{latest}.00"
+                else:
+                    raise RuntimeError(
+                        "GitHub вернул релиз с тегом без версии приложения и не содержит "
+                        "установщик с распознаваемым номером версии. Опубликуй релиз с тегом "
+                        "vX.Y.Z.00 или vX.Y.Z.NN."
+                    )
             installed_base = installed.split("-", 1)[0]
             if re.fullmatch(r"\d+\.\d+\.\d+", installed_base):
                 installed_base = f"{installed_base}.00"
