@@ -151,13 +151,33 @@ class UpdateWorker(QObject):
             self.status.emit("Проверяем последнюю стабильную версию…")
             self.progress.emit(8)
             self.release = json.loads(_http(LATEST_API).decode("utf-8"))
-            latest = str(self.release.get("tag_name", "")).removeprefix("v")
+            latest = str(self.release.get("tag_name", "")).removeprefix("v").strip()
             version_path = self.install_dir / "version.txt"
             installed = version_path.read_text(encoding="utf-8").strip() if version_path.is_file() else "0.0.0"
+
+            # Prefer a semantic version in the release tag. Older releases may have
+            # been published with a sequence number as the tag (for example "19"),
+            # while the actual installer asset still contains the app version.
             if re.fullmatch(r"\d+\.\d+\.\d+", latest):
                 latest = f"{latest}.00"
             elif not re.fullmatch(r"\d+\.\d+\.\d+\.\d{1,5}", latest):
-                raise RuntimeError("GitHub вернул некорректную версию стабильного релиза.")
+                release_assets = self.release.get("assets", [])
+                version_candidates = []
+                for asset in release_assets:
+                    asset_name = str(asset.get("name", ""))
+                    match = re.search(r"Lumi-Setup-(\d+\.\d+\.\d+(?:\.\d{1,5})?)(?:-beta\.\d+)?\.exe$", asset_name, re.IGNORECASE)
+                    if match:
+                        version_candidates.append(match.group(1))
+                if version_candidates:
+                    latest = version_candidates[0]
+                    if re.fullmatch(r"\d+\.\d+\.\d+", latest):
+                        latest = f"{latest}.00"
+                else:
+                    raise RuntimeError(
+                        "GitHub вернул релиз с тегом без версии приложения и не содержит "
+                        "установщик с распознаваемым номером версии. Опубликуй релиз с тегом "
+                        "vX.Y.Z.00 или vX.Y.Z.NN."
+                    )
             installed_base = installed.split("-", 1)[0]
             if re.fullmatch(r"\d+\.\d+\.\d+", installed_base):
                 installed_base = f"{installed_base}.00"
