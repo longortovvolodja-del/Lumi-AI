@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Основная версия беты, например 0.1.8"
+        description: "Версия: X.Y.Z, X.Y.Z. или X.Y.Z.NN; пустая четвёртая часть станет .00"
         required: true
-        default: "0.1.8"
+        default: "0.1.9"
         type: string
       beta_number:
         description: "Номер бета-сборки от 1 до 5 цифр, например 1"
@@ -29,17 +29,25 @@ jobs:
       - name: Check out selected branch
         uses: actions/checkout@v4
 
-      - name: Validate beta version
+      - name: Validate and normalize beta version
+        id: validate_version
         shell: pwsh
         run: |
-          $version = "${{ inputs.version }}"
+          $rawVersion = "${{ inputs.version }}".Trim()
           $betaNumber = "${{ inputs.beta_number }}"
-          if ($version -notmatch '^\d+\.\d+\.\d+$') {
-            throw "Укажи основную версию в формате X.Y.Z, например 0.1.8."
+          if ($rawVersion -match '^(\d+\.\d+\.\d+)\.$') {
+            $version = "$($Matches[1]).00"
+          } elseif ($rawVersion -match '^\d+\.\d+\.\d+$') {
+            $version = "$rawVersion.00"
+          } elseif ($rawVersion -match '^\d+\.\d+\.\d+\.\d{1,5}$') {
+            $version = $rawVersion
+          } else {
+            throw "Версия должна быть X.Y.Z, X.Y.Z. или X.Y.Z.NN (числа после последней точки — до 5 цифр)."
           }
           if ($betaNumber -notmatch '^\d{1,5}$') {
             throw "Номер бета-сборки должен содержать от 1 до 5 цифр."
           }
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -82,7 +90,7 @@ jobs:
       - name: Write installed version marker
         shell: pwsh
         run: |
-          $version = "${{ inputs.version }}"
+          $version = "${{ steps.validate_version.outputs.version }}"
           $betaNumber = "${{ inputs.beta_number }}"
           Set-Content -Path dist/Lumi/version.txt -Value "$version-beta.$betaNumber" -Encoding ascii
 
@@ -128,7 +136,7 @@ jobs:
       - name: Build internal Windows installer
         shell: pwsh
         run: |
-          $version = "${{ inputs.version }}"
+          $version = "${{ steps.validate_version.outputs.version }}"
           New-Item -ItemType Directory -Force dist/payload | Out-Null
           Set-Content -Path dist/installer-version.txt -Value $version -Encoding utf8
           $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
@@ -151,7 +159,7 @@ jobs:
       - name: Generate installer checksum
         shell: pwsh
         run: |
-          $version = "${{ inputs.version }}"
+          $version = "${{ steps.validate_version.outputs.version }}"
           $betaNumber = "${{ inputs.beta_number }}"
           $installer = Get-Item "dist/Lumi-Setup-$version-beta.$betaNumber.exe"
           $hash = (Get-FileHash $installer.FullName -Algorithm SHA256).Hash.ToLower()
@@ -160,8 +168,8 @@ jobs:
       - name: Publish beta GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ inputs.version }}-beta.${{ inputs.beta_number }}
-          name: Lumi AI v${{ inputs.version }} Beta ${{ inputs.beta_number }}
+          tag_name: v${{ steps.validate_version.outputs.version }}-beta.${{ inputs.beta_number }}
+          name: Lumi AI v${{ steps.validate_version.outputs.version }} Beta ${{ inputs.beta_number }}
           target_commitish: ${{ github.sha }}
           prerelease: true
           generate_release_notes: false
@@ -173,7 +181,7 @@ jobs:
             ## Что добавлено или исправлено
             ${{ inputs.changes }}
 
-            Установщик: `Lumi-Setup-${{ inputs.version }}-beta.${{ inputs.beta_number }}.exe`.
+            Установщик: `Lumi-Setup-${{ steps.validate_version.outputs.version }}-beta.${{ inputs.beta_number }}.exe`.
           files: |
             dist/Lumi-Setup-*-beta.*.exe
             dist/SHA256SUMS.txt

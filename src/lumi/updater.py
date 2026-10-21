@@ -154,9 +154,13 @@ class UpdateWorker(QObject):
             latest = str(self.release.get("tag_name", "")).removeprefix("v")
             version_path = self.install_dir / "version.txt"
             installed = version_path.read_text(encoding="utf-8").strip() if version_path.is_file() else "0.0.0"
-            if not latest or not re.fullmatch(r"\d+\.\d+\.\d+", latest):
+            if re.fullmatch(r"\d+\.\d+\.\d+", latest):
+                latest = f"{latest}.00"
+            elif not re.fullmatch(r"\d+\.\d+\.\d+\.\d{1,5}", latest):
                 raise RuntimeError("GitHub вернул некорректную версию стабильного релиза.")
             installed_base = installed.split("-", 1)[0]
+            if re.fullmatch(r"\d+\.\d+\.\d+", installed_base):
+                installed_base = f"{installed_base}.00"
             installed_is_beta = "-beta" in installed.lower()
             is_current_or_newer = _version_key(installed_base) >= _version_key(latest)
             beta_needs_stable = installed_is_beta and _version_key(installed_base) == _version_key(latest)

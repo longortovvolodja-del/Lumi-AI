@@ -9,9 +9,9 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Версия установщика, например 0.1.8"
+        description: "Версия: X.Y.Z, X.Y.Z. или X.Y.Z.NN; пустая четвёртая часть станет .00"
         required: true
-        default: "0.1.8"
+        default: "0.1.9"
         type: string
       changes:
         description: "Что добавлено или исправлено в этом выпуске"
@@ -124,11 +124,33 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
         run: choco install innosetup --yes --no-progress
 
+      - name: Normalize stable release version
+        id: release_version
+        if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REF -like "refs/tags/v*") {
+            $rawVersion = $env:GITHUB_REF_NAME.Substring(1)
+          } else {
+            $rawVersion = "${{ inputs.version }}".Trim()
+          }
+          if ($rawVersion -match '^(\d+\.\d+\.\d+)\.$') {
+            $version = "$($Matches[1]).00"
+          } elseif ($rawVersion -match '^\d+\.\d+\.\d+$') {
+            $version = "$rawVersion.00"
+          } elseif ($rawVersion -match '^\d+\.\d+\.\d+\.\d{1,5}$') {
+            $version = $rawVersion
+          } else {
+            throw "Версия должна быть X.Y.Z, X.Y.Z. или X.Y.Z.NN (числа после последней точки — до 5 цифр)."
+          }
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          Set-Content -Path dist/Lumi/version.txt -Value $version -Encoding ascii
+
       - name: Build internal Windows installer
         if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
         shell: pwsh
         run: |
-          if ($env:GITHUB_REF -like "refs/tags/v*") { $version = $env:GITHUB_REF_NAME.Substring(1) } else { $version = "${{ inputs.version }}" }
+          $version = "${{ steps.release_version.outputs.version }}"
           New-Item -ItemType Directory -Force dist/payload | Out-Null
           Set-Content -Path dist/installer-version.txt -Value $version -Encoding utf8
           $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
@@ -156,8 +178,8 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || format('v{0}', inputs.version) }}
-          name: Lumi AI ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || format('v{0}', inputs.version) }}
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || format('v{0}', steps.release_version.outputs.version) }}
+          name: Lumi AI ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || format('v{0}', steps.release_version.outputs.version) }}
           target_commitish: main
           generate_release_notes: false
           body: |
