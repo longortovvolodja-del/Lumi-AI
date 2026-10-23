@@ -328,16 +328,17 @@ class LumiWindow(QMainWindow):
 
         welcome_row = QHBoxLayout()
         avatar = QLabel()
-        avatar.setFixedSize(42, 42)
-        avatar.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        avatar.setPixmap(QPixmap(str(resource_path("assets/lumi-tray-icon.png"))).scaled(
-            38, 38, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
+        # Use the user's horizontal neon fox logo at the start of Lumi messages.
+        avatar.setFixedSize(150, 70)
+        avatar.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter)
+        avatar.setPixmap(QPixmap(str(resource_path("assets/Люми — неоновый лисий логотип.png"))).scaled(
+            146, 66, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
         ))
         welcome_column = QVBoxLayout()
         lumi_name = QLabel("Lumi")
         lumi_name.setStyleSheet("color: #8CEBFF; font-weight: 700;")
         welcome_bubble = QLabel(
-            "Привет! ✨\\nЯ Lumi — твоя неоновая помощница с лисьим характером.\\n\\n"
+            "Привет! ✨\nЯ Lumi — твоя неоновая помощница с лисьим характером.\n\n"
             "Сейчас мы готовим мой чат. На этом этапе можно проверить оформление, "
             "а подключение настоящей локальной модели будет отдельной задачей."
         )
