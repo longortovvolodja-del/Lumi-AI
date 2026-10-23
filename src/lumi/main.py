@@ -365,7 +365,7 @@ class LumiWindow(QMainWindow):
         API are preserved. Normalize literal backslash-n sequences too, for older/mock
         responses that may contain escaped newlines.
         """
-        message_text = str(text).replace("\\\\r\\\\n", "\\n").replace("\\\\n", "\\n")
+        message_text = str(text).replace("\\r\\n", "\n").replace("\\n", "\n")
         row_widget = QWidget()
         row_layout = QVBoxLayout(row_widget)
         row_layout.setContentsMargins(0, 0, 0, 0)
