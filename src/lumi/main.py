@@ -42,7 +42,7 @@ QMainWindow, QWidget {
     font-family: Segoe UI, sans-serif; font-size: 10pt;
 }
 QWidget#navPanel { background: #020D30; border-right: 1px solid #20263B; }
-QWidget#contentPanel { background: #0A0C16; }
+QWidget#contentPanel { background: #0A0C16; }\nQFrame#historyPanel { background: #080F26; border: 1px solid #1D2B4A; border-radius: 14px; }\nQFrame#chatTranscript { background: #0C1222; border: 1px solid #202B45; border-radius: 16px; }\nQFrame#composer { background: #10182B; border: 1px solid #263653; border-radius: 14px; }\nQLabel#lumiMessage { background: #121E38; border: 1px solid #254B6B; border-radius: 12px; padding: 14px; color: #EAF6FF; }\nQListWidget#chatHistoryList { background: transparent; border: none; padding: 2px; }
 QLabel#brand { color: #7CEEFF; font-size: 18pt; font-weight: 700; }
 QLabel#subtitle { color: #8D97B8; font-size: 9pt; }
 QLabel#section { color: #8CEBFF; font-size: 12pt; font-weight: 600; }
@@ -265,51 +265,123 @@ class LumiWindow(QMainWindow):
 
     def _build_chat_page(self) -> QWidget:
         page = QWidget()
-        layout = QVBoxLayout(page)
-        layout.setContentsMargins(0, 8, 0, 0)
+        outer = QHBoxLayout(page)
+        outer.setContentsMargins(0, 8, 0, 0)
+        outer.setSpacing(14)
+
+        self.chat_history_panel = QFrame()
+        self.chat_history_panel.setObjectName("historyPanel")
+        self.chat_history_panel.setFixedWidth(238)
+        history_layout = QVBoxLayout(self.chat_history_panel)
+        history_layout.setContentsMargins(12, 14, 12, 12)
+        history_layout.setSpacing(12)
+        history_title = QLabel("Твои чаты")
+        history_title.setObjectName("section")
+        history_layout.addWidget(history_title)
+
+        self.new_chat_button = QPushButton("＋  Новый чат")
+        self.new_chat_button.setObjectName("primaryButton")
+        self.new_chat_button.setToolTip("Начать новый чат (пока демонстрационный режим)")
+        self.new_chat_button.clicked.connect(self._new_chat_visual)
+        history_layout.addWidget(self.new_chat_button)
+
+        self.chat_search = QLineEdit()
+        self.chat_search.setPlaceholderText("⌕  Поиск по чатам")
+        self.chat_search.textChanged.connect(self._filter_chat_history)
+        history_layout.addWidget(self.chat_search)
+
+        self.chat_history_list = QListWidget()
+        self.chat_history_list.setObjectName("chatHistoryList")
+        self.chat_history_list.addItem("История появится здесь")
+        self.chat_history_list.item(0).setFlags(Qt.ItemFlag.NoItemFlags)
+        history_layout.addWidget(self.chat_history_list, 1)
+        history_hint = QLabel("Сохранение истории будет добавлено отдельно.")
+        history_hint.setObjectName("muted")
+        history_hint.setWordWrap(True)
+        history_layout.addWidget(history_hint)
+        outer.addWidget(self.chat_history_panel)
+
+        chat_area = QWidget()
+        layout = QVBoxLayout(chat_area)
+        layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(16)
-        layout.addLayout(self._page_heading(
-            "Привет! Я Lumi ✨", "Твоя неоновая помощница с лисьим характером."
+        heading = QHBoxLayout()
+        heading_text = QVBoxLayout()
+        title = QLabel("Чат с Lumi")
+        title.setObjectName("pageTitle")
+        subtitle = QLabel("Твоя неоновая помощница с лисьим характером")
+        subtitle.setObjectName("pageSubtitle")
+        heading_text.addWidget(title)
+        heading_text.addWidget(subtitle)
+        heading.addLayout(heading_text, 1)
+        self.chat_status = QLabel("●  ИИ ещё не подключён")
+        self.chat_status.setStyleSheet("color: #D7B879; font-size: 9pt;")
+        heading.addWidget(self.chat_status, 0, Qt.AlignmentFlag.AlignVCenter)
+        layout.addLayout(heading)
+
+        self.chat_transcript = QFrame()
+        self.chat_transcript.setObjectName("chatTranscript")
+        transcript_layout = QVBoxLayout(self.chat_transcript)
+        transcript_layout.setContentsMargins(22, 22, 22, 22)
+        transcript_layout.setSpacing(14)
+        transcript_layout.addStretch(1)
+
+        welcome_row = QHBoxLayout()
+        avatar = QLabel()
+        avatar.setFixedSize(42, 42)
+        avatar.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        avatar.setPixmap(QPixmap(str(resource_path("assets/lumi-tray-icon.png"))).scaled(
+            38, 38, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
         ))
-        card = QFrame()
-        card.setObjectName("card")
-        card_layout = QVBoxLayout(card)
-        card_layout.setContentsMargins(24, 24, 24, 24)
-        card_layout.setSpacing(14)
-        mascot = QLabel()
-        mascot.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        mascot.setPixmap(QPixmap(str(resource_path("assets/lumi-tray-icon.png"))).scaled(
-            104, 104, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
-        ))
-        card_layout.addWidget(mascot)
-        welcome = QLabel("Рада тебя видеть!")
-        welcome.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        welcome.setStyleSheet("font-size: 17pt; font-weight: 650; color: #8CEBFF;")
-        card_layout.addWidget(welcome)
-        intro = QLabel(
-            "Это будет наше место для общения. Сейчас в Lumi уже работают локальные заметки, "
-            "а подключение настоящего ИИ и отправка сообщений появятся отдельным этапом."
+        welcome_column = QVBoxLayout()
+        lumi_name = QLabel("Lumi")
+        lumi_name.setStyleSheet("color: #8CEBFF; font-weight: 700;")
+        welcome_bubble = QLabel(
+            "Привет! ✨\\nЯ Lumi — твоя неоновая помощница с лисьим характером.\\n\\n"
+            "Сейчас мы готовим мой чат. На этом этапе можно проверить оформление, "
+            "а подключение настоящей локальной модели будет отдельной задачей."
         )
-        intro.setObjectName("pageSubtitle")
-        intro.setWordWrap(True)
-        intro.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        intro.setMaximumWidth(580)
-        card_layout.addWidget(intro, 0, Qt.AlignmentFlag.AlignHCenter)
-        layout.addWidget(card, 1)
-        chat_row = QHBoxLayout()
+        welcome_bubble.setObjectName("lumiMessage")
+        welcome_bubble.setWordWrap(True)
+        welcome_bubble.setMaximumWidth(650)
+        welcome_column.addWidget(lumi_name)
+        welcome_column.addWidget(welcome_bubble)
+        welcome_row.addWidget(avatar, 0, Qt.AlignmentFlag.AlignTop)
+        welcome_row.addLayout(welcome_column, 1)
+        transcript_layout.addLayout(welcome_row)
+        transcript_layout.addStretch(2)
+        layout.addWidget(self.chat_transcript, 1)
+
+        composer = QFrame()
+        composer.setObjectName("composer")
+        composer_layout = QHBoxLayout(composer)
+        composer_layout.setContentsMargins(12, 8, 12, 8)
         self.chat_input = QLineEdit()
-        self.chat_input.setPlaceholderText("Чат с ИИ пока готовится…")
+        self.chat_input.setPlaceholderText("Подключение ИИ появится на следующем этапе…")
         self.chat_input.setEnabled(False)
-        send_button = QPushButton("Отправить")
+        send_button = QPushButton("Отправить  ➤")
         send_button.setObjectName("primaryButton")
         send_button.setEnabled(False)
-        chat_row.addWidget(self.chat_input, 1)
-        chat_row.addWidget(send_button)
-        layout.addLayout(chat_row)
-        note = QLabel("ИИ пока не подключён — кнопка отправки станет активной после интеграции модели.")
-        note.setObjectName("muted")
-        layout.addWidget(note)
+        composer_layout.addWidget(self.chat_input, 1)
+        composer_layout.addWidget(send_button)
+        layout.addWidget(composer)
+        footnote = QLabel("Пока это макет: сообщения не отправляются и история не сохраняется.")
+        footnote.setObjectName("muted")
+        layout.addWidget(footnote)
+        outer.addWidget(chat_area, 1)
+        self.chat_history_panel.setVisible(False)
         return page
+
+    def _new_chat_visual(self) -> None:
+        self.chat_history_list.clear()
+        self.chat_history_list.addItem("Новый чат — пока пусто")
+        self.chat_history_list.item(0).setFlags(Qt.ItemFlag.NoItemFlags)
+
+    def _filter_chat_history(self, query: str) -> None:
+        needle = query.strip().casefold()
+        for index in range(self.chat_history_list.count()):
+            item = self.chat_history_list.item(index)
+            item.setHidden(bool(needle) and needle not in item.text().casefold())
 
     def _build_notes_page(self) -> QWidget:
         page = QWidget()
