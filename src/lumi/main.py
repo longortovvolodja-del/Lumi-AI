@@ -9,7 +9,7 @@ from PySide6.QtCore import Qt, QSize
 from PySide6.QtGui import QAction, QFont, QIcon, QPixmap, QTextCursor
 from PySide6.QtWidgets import (
     QApplication, QComboBox, QFileDialog, QFrame, QHBoxLayout, QLabel,
-    QLineEdit, QListWidget, QMainWindow, QMessageBox, QPushButton,
+    QLineEdit, QListWidget, QMainWindow, QMessageBox, QPushButton, QSizePolicy,
     QStackedWidget, QTextEdit, QVBoxLayout, QWidget,
 )
 
@@ -326,42 +326,15 @@ class LumiWindow(QMainWindow):
         transcript_layout.setSpacing(14)
         transcript_layout.addStretch(1)
 
-        # Match the reference: show the wide neon logo above the greeting,
-        # with the message bubble slightly indented beneath it.
-        welcome_column = QVBoxLayout()
-        welcome_column.setContentsMargins(0, 0, 0, 0)
-        welcome_column.setSpacing(8)
-
-        logo_row = QHBoxLayout()
-        logo_row.setContentsMargins(24, 0, 0, 0)
-        avatar = QLabel()
-        avatar.setFixedSize(126, 62)
-        avatar.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-        # Keep the PNG alpha channel visible instead of painting a solid label background.
-        avatar.setStyleSheet("background: transparent;")
-        avatar.setAutoFillBackground(False)
-        avatar.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
-        avatar.setPixmap(QPixmap(str(resource_path("assets/Люми — неоновый лисий логотип.png"))).scaled(
-            122, 60, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
-        ))
-        logo_row.addWidget(avatar, 0, Qt.AlignmentFlag.AlignLeft)
-        logo_row.addStretch(1)
-        welcome_column.addLayout(logo_row)
-
-        welcome_bubble = QLabel(
-            "Привет! ✨\\nЯ Lumi — твоя неоновая помощница с лисьим характером.\\n\\n"
+        # Keep the message layout reusable for responses received from Lumi's internal AI API.
+        self.chat_messages_layout = transcript_layout
+        self._add_lumi_message(
+            "Привет! ✨\n"
+            "Я Lumi — твоя неоновая помощница с лисьим характером.\n\n"
             "Сейчас мы готовим мой чат. На этом этапе можно проверить оформление, "
-            "а подключение настоящей локальной модели будет отдельной задачей."
+            "а подключение настоящей локальной модели будет отдельной задачей.",
+            show_logo=True,
         )
-        welcome_bubble.setObjectName("lumiMessage")
-        welcome_bubble.setWordWrap(True)
-        welcome_bubble.setMaximumWidth(900)
-        welcome_bubble.setContentsMargins(0, 0, 0, 0)
-        bubble_row = QHBoxLayout()
-        bubble_row.setContentsMargins(76, 0, 0, 0)
-        bubble_row.addWidget(welcome_bubble, 1)
-        welcome_column.addLayout(bubble_row)
-        transcript_layout.addLayout(welcome_column)
         transcript_layout.addStretch(2)
         layout.addWidget(self.chat_transcript, 1)
 
@@ -384,6 +357,53 @@ class LumiWindow(QMainWindow):
         outer.addWidget(chat_area, 1)
         self.chat_history_panel.setVisible(False)
         return page
+
+    def _add_lumi_message(self, text: str, *, show_logo: bool = True) -> QWidget:
+        """Add a Lumi response bubble; safe to call with plain text returned by the internal AI API.
+
+        QLabel wraps long lines to the available width. Real newline characters from the
+        API are preserved. Normalize literal backslash-n sequences too, for older/mock
+        responses that may contain escaped newlines.
+        """
+        message_text = str(text).replace("\\\\r\\\\n", "\\n").replace("\\\\n", "\\n")
+        row_widget = QWidget()
+        row_layout = QVBoxLayout(row_widget)
+        row_layout.setContentsMargins(0, 0, 0, 0)
+        row_layout.setSpacing(8)
+
+        if show_logo:
+            logo_row = QHBoxLayout()
+            logo_row.setContentsMargins(24, 0, 0, 0)
+            avatar = QLabel()
+            avatar.setFixedSize(126, 62)
+            avatar.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+            avatar.setStyleSheet("background: transparent;")
+            avatar.setAutoFillBackground(False)
+            avatar.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+            avatar.setPixmap(QPixmap(str(resource_path("assets/Люми — неоновый лисий логотип.png"))).scaled(
+                122, 60, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
+            ))
+            logo_row.addWidget(avatar, 0, Qt.AlignmentFlag.AlignLeft)
+            logo_row.addStretch(1)
+            row_layout.addLayout(logo_row)
+
+        bubble_row = QHBoxLayout()
+        bubble_row.setContentsMargins(76 if show_logo else 24, 0, 0, 0)
+        bubble = QLabel(message_text)
+        bubble.setObjectName("lumiMessage")
+        bubble.setWordWrap(True)
+        bubble.setTextFormat(Qt.TextFormat.PlainText)
+        bubble.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        bubble.setMaximumWidth(900)
+        bubble.setMinimumWidth(0)
+        bubble_row.addWidget(bubble, 1)
+        row_layout.addLayout(bubble_row)
+        self.chat_messages_layout.addWidget(row_widget)
+        return row_widget
+
+    def display_lumi_response(self, text: str) -> None:
+        """Entry point for the internal AI/API layer to display a returned response."""
+        self._add_lumi_message(text, show_logo=True)
 
     def _new_chat_visual(self) -> None:
         self.chat_history_list.clear()
