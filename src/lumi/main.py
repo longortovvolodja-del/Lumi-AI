@@ -326,30 +326,38 @@ class LumiWindow(QMainWindow):
         transcript_layout.setSpacing(14)
         transcript_layout.addStretch(1)
 
-        welcome_row = QHBoxLayout()
-        avatar = QLabel()
-        # Use the user's horizontal neon fox logo at the start of Lumi messages.
-        avatar.setFixedSize(150, 70)
-        avatar.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter)
-        avatar.setPixmap(QPixmap(str(resource_path("assets/Люми — неоновый лисий логотип.png"))).scaled(
-            146, 66, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
-        ))
+        # Match the reference: show the wide neon logo above the greeting,
+        # with the message bubble slightly indented beneath it.
         welcome_column = QVBoxLayout()
-        lumi_name = QLabel("Lumi")
-        lumi_name.setStyleSheet("color: #8CEBFF; font-weight: 700;")
+        welcome_column.setContentsMargins(0, 0, 0, 0)
+        welcome_column.setSpacing(8)
+
+        logo_row = QHBoxLayout()
+        logo_row.setContentsMargins(24, 0, 0, 0)
+        avatar = QLabel()
+        avatar.setFixedSize(126, 62)
+        avatar.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        avatar.setPixmap(QPixmap(str(resource_path("assets/Люми — неоновый лисий логотип.png"))).scaled(
+            122, 60, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
+        ))
+        logo_row.addWidget(avatar, 0, Qt.AlignmentFlag.AlignLeft)
+        logo_row.addStretch(1)
+        welcome_column.addLayout(logo_row)
+
         welcome_bubble = QLabel(
-            "Привет! ✨\nЯ Lumi — твоя неоновая помощница с лисьим характером.\n\n"
+            "Привет! ✨\\nЯ Lumi — твоя неоновая помощница с лисьим характером.\\n\\n"
             "Сейчас мы готовим мой чат. На этом этапе можно проверить оформление, "
             "а подключение настоящей локальной модели будет отдельной задачей."
         )
         welcome_bubble.setObjectName("lumiMessage")
         welcome_bubble.setWordWrap(True)
-        welcome_bubble.setMaximumWidth(650)
-        welcome_column.addWidget(lumi_name)
-        welcome_column.addWidget(welcome_bubble)
-        welcome_row.addWidget(avatar, 0, Qt.AlignmentFlag.AlignTop)
-        welcome_row.addLayout(welcome_column, 1)
-        transcript_layout.addLayout(welcome_row)
+        welcome_bubble.setMaximumWidth(900)
+        welcome_bubble.setContentsMargins(0, 0, 0, 0)
+        bubble_row = QHBoxLayout()
+        bubble_row.setContentsMargins(76, 0, 0, 0)
+        bubble_row.addWidget(welcome_bubble, 1)
+        welcome_column.addLayout(bubble_row)
+        transcript_layout.addLayout(welcome_column)
         transcript_layout.addStretch(2)
         layout.addWidget(self.chat_transcript, 1)
 
