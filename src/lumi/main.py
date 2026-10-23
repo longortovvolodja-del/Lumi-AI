@@ -337,6 +337,10 @@ class LumiWindow(QMainWindow):
         avatar = QLabel()
         avatar.setFixedSize(126, 62)
         avatar.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        # Keep the PNG alpha channel visible instead of painting a solid label background.
+        avatar.setStyleSheet("background: transparent;")
+        avatar.setAutoFillBackground(False)
+        avatar.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         avatar.setPixmap(QPixmap(str(resource_path("assets/Люми — неоновый лисий логотип.png"))).scaled(
             122, 60, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
         ))
