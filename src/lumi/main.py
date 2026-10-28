@@ -46,7 +46,12 @@ QMainWindow, QWidget {
     font-family: Segoe UI, sans-serif; font-size: 10pt;
 }
 QWidget#navPanel { background: #020D30; border-right: 1px solid #20263B; }
-QWidget#contentPanel { background: #0A0C16; }\nQFrame#historyPanel { background: #080F26; border: 1px solid #1D2B4A; border-radius: 14px; }\nQFrame#chatTranscript { background: #0C1222; border: 1px solid #202B45; border-radius: 16px; }\nQFrame#composer { background: #10182B; border: 1px solid #263653; border-radius: 14px; }\nQLabel#lumiMessage { background: #121E38; border: 1px solid #254B6B; border-radius: 12px; padding: 14px; color: #EAF6FF; }\nQListWidget#chatHistoryList { background: transparent; border: none; padding: 2px; }
+QWidget#contentPanel { background: #0A0C16; }
+QFrame#historyPanel { background: #080F26; border: 1px solid #1D2B4A; border-radius: 14px; }
+QFrame#chatTranscript { background: #0C1222; border: 1px solid #202B45; border-radius: 16px; }
+QFrame#composer { background: #10182B; border: 1px solid #263653; border-radius: 14px; }
+QLabel#lumiMessage { background: #121E38; border: 1px solid #254B6B; border-radius: 12px; padding: 14px; color: #EAF6FF; }
+QListWidget#chatHistoryList { background: transparent; border: none; padding: 2px; }
 QLabel#brand { color: #7CEEFF; font-size: 18pt; font-weight: 700; }
 QLabel#subtitle { color: #8D97B8; font-size: 9pt; }
 QLabel#section { color: #8CEBFF; font-size: 12pt; font-weight: 600; }
@@ -369,8 +374,6 @@ class LumiWindow(QMainWindow):
         transcript_layout = QVBoxLayout(self.chat_transcript)
         transcript_layout.setContentsMargins(22, 22, 22, 22)
         transcript_layout.setSpacing(14)
-        transcript_layout.addStretch(1)
-
         # Keep the message layout reusable for responses received from Lumi's internal AI API.
         self.chat_messages_layout = transcript_layout
         self._add_lumi_message(
@@ -380,7 +383,6 @@ class LumiWindow(QMainWindow):
             "а подключение настоящей локальной модели будет отдельной задачей.",
             show_logo=True,
         )
-        transcript_layout.addStretch(2)
         layout.addWidget(self.chat_transcript, 1)
 
         composer = QFrame()
@@ -448,6 +450,8 @@ class LumiWindow(QMainWindow):
         bubble.setTextFormat(Qt.TextFormat.PlainText)
         bubble.setStyleSheet("background: #202847; border: 1px solid #394A78; border-radius: 12px; padding: 12px; color: #F2F4FF;")
         bubble.setMaximumWidth(760)
+        bubble.setMinimumHeight(44)
+        bubble.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         bubble.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         row_layout.addWidget(bubble, 1)
         self.chat_messages_layout.addWidget(row)
@@ -508,6 +512,8 @@ class LumiWindow(QMainWindow):
         bubble.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         bubble.setMaximumWidth(900)
         bubble.setMinimumWidth(0)
+        bubble.setMinimumHeight(48)
+        bubble.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         bubble_row.addWidget(bubble, 1)
         row_layout.addLayout(bubble_row)
         self.chat_messages_layout.addWidget(row_widget)
