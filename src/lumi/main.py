@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import json
@@ -14,7 +15,7 @@ from PySide6.QtGui import QAction, QFont, QIcon, QPixmap, QTextCursor
 from PySide6.QtWidgets import (
     QApplication, QComboBox, QFileDialog, QFrame, QHBoxLayout, QLabel,
     QLineEdit, QListWidget, QListWidgetItem, QMainWindow, QMessageBox, QPushButton, QSizePolicy,
-    QScrollArea, QStackedWidget, QTextEdit, QVBoxLayout, QWidget, QCheckBox,
+    QScrollArea, QStackedWidget, QTextEdit, QVBoxLayout, QWidget, QCheckBox, QToolButton,
 )
 
 from lumi import __version__
@@ -258,6 +259,8 @@ class LumiWindow(QMainWindow):
         self.api_worker: AnyModelRequestWorker | None = None
         self._tool_round_active = False
         self._tool_round_count = 0
+        self._activity_events: list[dict[str, str]] = []
+        self._activity_started_at = 0.0
         self.current_note_id: int | None = None
         self.nav_buttons: dict[str, QPushButton] = {}
         self.sidebar_collapsed = False
@@ -570,6 +573,8 @@ class LumiWindow(QMainWindow):
         messages = [{"role": "system", "content": self._effective_system_prompt()}] + list(self.chat_messages)
         self._tool_round_active = True
         self._tool_round_count = 0
+        self._activity_events = [{"title": "Запрос принят", "detail": "Сообщение передано выбранной облачной модели.", "status": "ok"}]
+        self._activity_started_at = time.perf_counter()
         self.api_worker = AnyModelRequestWorker(key, model, messages)
         self.api_worker.succeeded.connect(self._on_cloud_response)
         self.api_worker.failed.connect(self._on_cloud_error)
@@ -601,6 +606,81 @@ class LumiWindow(QMainWindow):
         if follow_latest:
             QTimer.singleShot(0, lambda: bar.setValue(bar.maximum()))
 
+    def _record_activity(self, title: str, detail: str, status: str = "ok") -> None:
+        """Store a concise, user-visible record of an action actually performed."""
+        self._activity_events.append({
+            "title": str(title),
+            "detail": str(detail),
+            "status": status if status in {"ok", "error", "cancelled", "running"} else "ok",
+        })
+
+    def _add_activity_block(self, elapsed_seconds: float) -> QWidget:
+        """Render a compact expandable action log before Lumi's final answer."""
+        container = QFrame()
+        container.setObjectName("activityBlock")
+        container.setStyleSheet(
+            "QFrame#activityBlock { background: #0D1428; border: 1px solid #253454; "
+            "border-radius: 11px; }"
+            "QToolButton { background: transparent; border: none; color: #C9D5F2; "
+            "text-align: left; padding: 9px 12px; font-weight: 600; }"
+            "QLabel { background: transparent; color: #D9E2F8; }"
+        )
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        seconds = max(0.0, float(elapsed_seconds))
+        if seconds < 60:
+            duration = f"{seconds:.1f} с"
+        else:
+            minutes, remaining = divmod(int(seconds), 60)
+            duration = f"{minutes} мин {remaining} с"
+        header = QToolButton()
+        header.setText(f"✓  Выполнено за {duration}   ▾")
+        header.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+        header.setCheckable(True)
+        header.setChecked(False)
+        header.setCursor(Qt.CursorShape.PointingHandCursor)
+        details = QWidget()
+        details_layout = QVBoxLayout(details)
+        details_layout.setContentsMargins(14, 0, 14, 12)
+        details_layout.setSpacing(10)
+        for event in self._activity_events:
+            line = QHBoxLayout()
+            line.setSpacing(9)
+            status = str(event.get("status", "ok"))
+            symbol = "✓" if status == "ok" else ("✕" if status == "error" else ("↶" if status == "cancelled" else "…"))
+            marker = QLabel(symbol)
+            marker.setFixedWidth(16)
+            marker.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter)
+            marker.setStyleSheet("color: #7CEEFF; font-weight: 700;" if status == "ok" else "color: #FFB2B2;")
+            text_col = QVBoxLayout()
+            text_col.setSpacing(2)
+            title = QLabel(str(event.get("title", "Действие")))
+            title.setStyleSheet("font-weight: 600; color: #F2F4FF;")
+            title.setWordWrap(True)
+            detail = QLabel(str(event.get("detail", "")))
+            detail.setStyleSheet("font-size: 9pt; color: #9EACC9;")
+            detail.setWordWrap(True)
+            text_col.addWidget(title)
+            if detail.text():
+                text_col.addWidget(detail)
+            line.addWidget(marker)
+            line.addLayout(text_col, 1)
+            details_layout.addLayout(line)
+        details.setVisible(False)
+        header.toggled.connect(details.setVisible)
+        header.toggled.connect(lambda checked: header.setText(
+            f"✓  Выполнено за {duration}   {'▴' if checked else '▾'}"
+        ))
+        layout.addWidget(header)
+        layout.addWidget(details)
+        wrapper = QWidget()
+        wrapper_layout = QHBoxLayout(wrapper)
+        wrapper_layout.setContentsMargins(76, 0, 24, 0)
+        wrapper_layout.addWidget(container, 1)
+        self._append_chat_message(wrapper)
+        return wrapper
+
     def _start_tool_followup(self) -> None:
         """Ask the model to continue after a tool result, without unlocking the chat."""
         key = str(self.settings.value("anymodel/api_key", "")).strip()
@@ -611,6 +691,58 @@ class LumiWindow(QMainWindow):
         self.api_worker.failed.connect(self._on_cloud_error)
         self.api_worker.finished.connect(self._on_cloud_request_finished)
         self.api_worker.start()
+
+    @staticmethod
+    def _describe_tool_action(name: str, arguments: dict) -> str:
+        """Describe the actual tool call without exposing secrets or full note bodies."""
+        if name == "list_notes":
+            query = str(arguments.get("query", "")).strip()
+            return f"Поиск заметок по фразе «{query}»." if query else "Запрошен список сохранённых заметок."
+        if name == "read_note":
+            return f"Запрошено чтение заметки с ID {arguments.get('note_id', '?')}."
+        if name == "create_note":
+            return f"Создание заметки «{str(arguments.get('title', 'Без названия'))[:100]}»."
+        if name == "update_note":
+            parts = []
+            if "title" in arguments:
+                parts.append("изменение названия")
+            if "body" in arguments:
+                parts.append("изменение текста")
+            return f"Заметка ID {arguments.get('note_id', '?')}: {', '.join(parts) or 'запрошено обновление'}."
+        if name == "delete_note":
+            return f"Запрошено удаление заметки с ID {arguments.get('note_id', '?')}."
+        return "Переданы аргументы зарегистрированному инструменту."
+
+    @staticmethod
+    def _tool_result_title(name: str, result: dict) -> str:
+        if not result.get("ok"):
+            return "Действие отменено" if result.get("cancelled") else "Инструмент завершился с ошибкой"
+        return {
+            "list_notes": "Результат поиска заметок",
+            "read_note": "Заметка прочитана",
+            "create_note": "Заметка создана",
+            "update_note": "Заметка обновлена",
+            "delete_note": "Заметка удалена",
+        }.get(name, "Инструмент выполнен")
+
+    @staticmethod
+    def _tool_result_detail(name: str, result: dict) -> str:
+        if not result.get("ok"):
+            return str(result.get("error", "Операция не выполнена."))
+        if name == "list_notes":
+            notes = result.get("notes", [])
+            names = ", ".join(str(note.get("title", "Без названия")) for note in notes[:5])
+            suffix = "…" if result.get("truncated") else ""
+            return f"Найдено заметок: {result.get('count', len(notes))}. {names}{suffix}".strip()
+        if name == "read_note":
+            note = result.get("note", {})
+            return f"Прочитано: «{note.get('title', 'Без названия')}» (ID {note.get('id', '?')})."
+        if name in {"create_note", "update_note"}:
+            note = result.get("note", {})
+            return f"«{note.get('title', 'Без названия')}» (ID {note.get('id', '?')}); сохранение проверено."
+        if name == "delete_note":
+            return f"Удаление заметки «{result.get('title', 'Без названия')}» проверено."
+        return "Операция успешно завершена и подтверждена результатом инструмента."
 
     def _run_note_tool(self, name: str, arguments: dict) -> dict:
         """Run one explicitly registered note tool and return a JSON-safe result."""
@@ -711,9 +843,20 @@ class LumiWindow(QMainWindow):
                     arguments = json.loads(raw_arguments) if isinstance(raw_arguments, str) else raw_arguments
                     if not isinstance(arguments, dict):
                         raise ValueError("Ожидался объект аргументов.")
+                    self._record_activity(
+                        f"Вызов инструмента: {name}",
+                        self._describe_tool_action(name, arguments),
+                        "running",
+                    )
                     result = self._run_note_tool(name, arguments)
                 except (TypeError, ValueError, json.JSONDecodeError) as exc:
                     result = {"ok": False, "error": f"Не удалось разобрать аргументы инструмента: {exc}"}
+                ok = bool(result.get("ok"))
+                self._record_activity(
+                    self._tool_result_title(name, result),
+                    self._tool_result_detail(name, result),
+                    "ok" if ok else ("cancelled" if result.get("cancelled") else "error"),
+                )
                 self.chat_messages.append({
                     "role": "tool",
                     "tool_call_id": call_id,
@@ -730,9 +873,14 @@ class LumiWindow(QMainWindow):
             self._on_cloud_error("Модель вернула пустой ответ.")
             return
         self._tool_round_active = False
+        if self._activity_started_at:
+            elapsed = time.perf_counter() - self._activity_started_at
+            if self._activity_events:
+                self._add_activity_block(elapsed)
         self.chat_messages.append({"role": "assistant", "content": answer})
         self._commit_active_chat()
         self._add_lumi_message(answer, show_logo=True)
+        self._activity_started_at = 0.0
         self.chat_status.setText("●  AnyModel · Grok 4.6")
         self.chat_status.setStyleSheet("color: #7CEEFF; font-size: 9pt;")
 
