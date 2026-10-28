@@ -111,8 +111,18 @@ class AnyModelRequestWorker(QThread):
     def run(self) -> None:
         payload = json.dumps({"model": self.model_id, "messages": self.messages, "stream": False}).encode("utf-8")
         request = urllib.request.Request(
-            "https://anymodel.org/v1/chat/completions", data=payload,
-            headers={"Content-Type": "application/json", "Authorization": f"Bearer {self.api_key}"},
+            "https://anymodel.org/v1/chat/completions",
+            data=payload,
+            headers={
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+                "Authorization": f"Bearer {self.api_key}",
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/131.0.0.0 Safari/537.36"
+                ),
+            },
             method="POST",
         )
         try:
@@ -128,7 +138,15 @@ class AnyModelRequestWorker(QThread):
         except urllib.error.HTTPError as exc:
             try: detail = exc.read().decode("utf-8", errors="replace")[:500]
             except Exception: detail = str(exc)
-            self.failed.emit(f"Ошибка API HTTP {exc.code}: {detail}")
+            if exc.code == 403 and ("1010" in detail or "error code: 1010" in detail.lower()):
+                self.failed.emit(
+                    "AnyModel отклонил HTTP-запрос (403 / 1010). "
+                    "Это ответ защитного слоя сервера, а не ошибка ID модели. "
+                    "Проверьте тот же ключ и запрос в официальном клиенте AnyModel; "
+                    "если там работает, обратитесь в поддержку AnyModel по поводу блокировки клиента."
+                )
+            else:
+                self.failed.emit(f"Ошибка API HTTP {exc.code}: {detail}")
         except urllib.error.URLError as exc:
             self.failed.emit(f"Не удалось подключиться к AnyModel: {exc.reason}")
         except (KeyError, IndexError, TypeError, ValueError, json.JSONDecodeError) as exc:
