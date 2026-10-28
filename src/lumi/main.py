@@ -261,6 +261,12 @@ class LumiWindow(QMainWindow):
         self._tool_round_count = 0
         self._activity_events: list[dict[str, str]] = []
         self._activity_started_at = 0.0
+        self._activity_container: QFrame | None = None
+        self._activity_header: QToolButton | None = None
+        self._activity_details: QWidget | None = None
+        self._activity_details_layout: QVBoxLayout | None = None
+        self._activity_duration_label: QLabel | None = None
+        self._pending_activity_duration: QLabel | None = None
         self.current_note_id: int | None = None
         self.nav_buttons: dict[str, QPushButton] = {}
         self.sidebar_collapsed = False
@@ -575,6 +581,7 @@ class LumiWindow(QMainWindow):
         self._tool_round_count = 0
         self._activity_events = [{"title": "Запрос принят", "detail": "Сообщение передано выбранной облачной модели.", "status": "ok"}]
         self._activity_started_at = time.perf_counter()
+        self._create_live_activity_block()
         self.api_worker = AnyModelRequestWorker(key, model, messages)
         self.api_worker.succeeded.connect(self._on_cloud_response)
         self.api_worker.failed.connect(self._on_cloud_error)
@@ -607,15 +614,24 @@ class LumiWindow(QMainWindow):
             QTimer.singleShot(0, lambda: bar.setValue(bar.maximum()))
 
     def _record_activity(self, title: str, detail: str, status: str = "ok") -> None:
-        """Store a concise, user-visible record of an action actually performed."""
+        """Store a concise record of a real action and refresh the live chat activity block."""
         self._activity_events.append({
             "title": str(title),
             "detail": str(detail),
             "status": status if status in {"ok", "error", "cancelled", "running"} else "ok",
         })
+        self._refresh_live_activity_details()
 
-    def _add_activity_block(self, elapsed_seconds: float) -> QWidget:
-        """Render a compact expandable action log before Lumi's final answer."""
+    @staticmethod
+    def _format_elapsed(seconds: float) -> str:
+        seconds = max(0.0, float(seconds))
+        if seconds < 60:
+            return f"{seconds:.1f} с"
+        minutes, remaining = divmod(int(seconds), 60)
+        return f"{minutes} мин {remaining} с"
+
+    def _create_live_activity_block(self) -> QWidget:
+        """Insert one persistent activity block into the transcript as soon as work starts."""
         container = QFrame()
         container.setObjectName("activityBlock")
         container.setStyleSheet(
@@ -628,14 +644,8 @@ class LumiWindow(QMainWindow):
         layout = QVBoxLayout(container)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
-        seconds = max(0.0, float(elapsed_seconds))
-        if seconds < 60:
-            duration = f"{seconds:.1f} с"
-        else:
-            minutes, remaining = divmod(int(seconds), 60)
-            duration = f"{minutes} мин {remaining} с"
         header = QToolButton()
-        header.setText(f"✓  Выполнено за {duration}   ▾")
+        header.setText("…  Люми выполняет задачу")
         header.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
         header.setCheckable(True)
         header.setChecked(False)
@@ -644,6 +654,38 @@ class LumiWindow(QMainWindow):
         details_layout = QVBoxLayout(details)
         details_layout.setContentsMargins(14, 0, 14, 12)
         details_layout.setSpacing(10)
+        details.setVisible(False)
+        header.toggled.connect(details.setVisible)
+        layout.addWidget(header)
+        layout.addWidget(details)
+        wrapper = QWidget()
+        wrapper_layout = QHBoxLayout(wrapper)
+        wrapper_layout.setContentsMargins(76, 0, 24, 0)
+        wrapper_layout.addWidget(container, 1)
+        self._activity_container = container
+        self._activity_header = header
+        self._activity_details = details
+        self._activity_details_layout = details_layout
+        self._refresh_live_activity_details()
+        self._append_chat_message(wrapper)
+        return wrapper
+
+    def _refresh_live_activity_details(self) -> None:
+        """Rebuild the expandable details from real action events while keeping the same block."""
+        details_layout = self._activity_details_layout
+        if details_layout is None:
+            return
+        while details_layout.count():
+            item = details_layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+            elif item.layout() is not None:
+                child_layout = item.layout()
+                while child_layout.count():
+                    child = child_layout.takeAt(0)
+                    if child.widget() is not None:
+                        child.widget().deleteLater()
         for event in self._activity_events:
             line = QHBoxLayout()
             line.setSpacing(9)
@@ -652,7 +694,7 @@ class LumiWindow(QMainWindow):
             marker = QLabel(symbol)
             marker.setFixedWidth(16)
             marker.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter)
-            marker.setStyleSheet("color: #7CEEFF; font-weight: 700;" if status == "ok" else "color: #FFB2B2;")
+            marker.setStyleSheet("color: #7CEEFF; font-weight: 700;" if status == "ok" else ("color: #FFB2B2;" if status in {"error", "cancelled"} else "color: #B8A5FF;"))
             text_col = QVBoxLayout()
             text_col.setSpacing(2)
             title = QLabel(str(event.get("title", "Действие")))
@@ -667,19 +709,29 @@ class LumiWindow(QMainWindow):
             line.addWidget(marker)
             line.addLayout(text_col, 1)
             details_layout.addLayout(line)
-        details.setVisible(False)
-        header.toggled.connect(details.setVisible)
-        header.toggled.connect(lambda checked: header.setText(
-            f"✓  Выполнено за {duration}   {'▴' if checked else '▾'}"
-        ))
-        layout.addWidget(header)
-        layout.addWidget(details)
-        wrapper = QWidget()
-        wrapper_layout = QHBoxLayout(wrapper)
-        wrapper_layout.setContentsMargins(76, 0, 24, 0)
-        wrapper_layout.addWidget(container, 1)
-        self._append_chat_message(wrapper)
-        return wrapper
+        if self._activity_header is not None and self._activity_started_at:
+            self._activity_header.setText("…  Люми выполняет задачу")
+        if self._activity_container is not None:
+            self._activity_container.adjustSize()
+
+    def _finish_live_activity(self, *, success: bool) -> None:
+        """Close the live log; duration is shown once, beneath Lumi's response."""
+        if not self._activity_started_at:
+            return
+        elapsed = time.perf_counter() - self._activity_started_at
+        if self._activity_header is not None:
+            self._activity_header.setText("✓  Действия выполнены  ▾" if success else "!  Выполнение завершено  ▾")
+        self._activity_started_at = 0.0
+        # Keep the log available for inspection, but do not repeat the duration in its header.
+        self._activity_container = None
+        self._activity_header = None
+        self._activity_details = None
+        self._activity_details_layout = None
+        self._activity_duration_label = QLabel(f"Completed in {self._format_elapsed(elapsed)}")
+        self._activity_duration_label.setObjectName("muted")
+        self._activity_duration_label.setStyleSheet("color: #8D97B8; font-size: 9pt;")
+        self._activity_duration_label.setContentsMargins(76, 0, 24, 4)
+        self._pending_activity_duration = self._activity_duration_label
 
     def _start_tool_followup(self) -> None:
         """Ask the model to continue after a tool result, without unlocking the chat."""
@@ -824,7 +876,11 @@ class LumiWindow(QMainWindow):
             self._tool_round_count += 1
             if self._tool_round_count > 6:
                 self._tool_round_active = False
+                self._finish_live_activity(success=False)
                 self._add_lumi_message("Я остановила цепочку действий: достигнут безопасный лимит вызовов инструментов. Попробуй уточнить задачу.", show_logo=True)
+                if self._pending_activity_duration is not None:
+                    self._append_chat_message(self._pending_activity_duration)
+                    self._pending_activity_duration = None
                 self.chat_status.setText("●  Остановлено")
                 self._commit_active_chat()
                 return
@@ -873,20 +929,23 @@ class LumiWindow(QMainWindow):
             self._on_cloud_error("Модель вернула пустой ответ.")
             return
         self._tool_round_active = False
-        if self._activity_started_at:
-            elapsed = time.perf_counter() - self._activity_started_at
-            if self._activity_events:
-                self._add_activity_block(elapsed)
+        self._finish_live_activity(success=True)
         self.chat_messages.append({"role": "assistant", "content": answer})
         self._commit_active_chat()
         self._add_lumi_message(answer, show_logo=True)
-        self._activity_started_at = 0.0
+        if self._pending_activity_duration is not None:
+            self._append_chat_message(self._pending_activity_duration)
+            self._pending_activity_duration = None
         self.chat_status.setText("●  AnyModel · Grok 4.6")
         self.chat_status.setStyleSheet("color: #7CEEFF; font-size: 9pt;")
 
     def _on_cloud_error(self, message: str) -> None:
         self._tool_round_active = False
+        self._finish_live_activity(success=False)
         self._add_lumi_message(message, show_logo=True)
+        if self._pending_activity_duration is not None:
+            self._append_chat_message(self._pending_activity_duration)
+            self._pending_activity_duration = None
         self.chat_status.setText("●  Ошибка подключения")
         self.chat_status.setStyleSheet("color: #FF9C9C; font-size: 9pt;")
         if self.chat_messages and self.chat_messages[-1].get("role") == "user":
