@@ -256,6 +256,8 @@ class LumiWindow(QMainWindow):
         self.active_chat_session: dict[str, object] | None = None
         self.active_chat_title = "Новый чат"
         self.api_worker: AnyModelRequestWorker | None = None
+        self._tool_round_active = False
+        self._tool_round_count = 0
         self.current_note_id: int | None = None
         self.nav_buttons: dict[str, QPushButton] = {}
         self.sidebar_collapsed = False
@@ -566,6 +568,8 @@ class LumiWindow(QMainWindow):
         self.chat_status.setStyleSheet("color: #B8A5FF; font-size: 9pt;")
         model = str(self.settings.value("anymodel/model", "xai/grok-4.6"))
         messages = [{"role": "system", "content": self._effective_system_prompt()}] + list(self.chat_messages)
+        self._tool_round_active = True
+        self._tool_round_count = 0
         self.api_worker = AnyModelRequestWorker(key, model, messages)
         self.api_worker.succeeded.connect(self._on_cloud_response)
         self.api_worker.failed.connect(self._on_cloud_error)
@@ -661,7 +665,7 @@ class LumiWindow(QMainWindow):
                 answer = QMessageBox.question(
                     self,
                     "Подтверждение удаления",
-                    f"Люми просит удалить заметку «{note['title']}» (ID {note_id}).\\n\\nУдалить её безвозвратно?",
+                    f"Люми просит удалить заметку «{note['title']}» (ID {note_id}).\n\nУдалить её безвозвратно?",
                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                     QMessageBox.StandardButton.No,
                 )
@@ -854,7 +858,7 @@ class LumiWindow(QMainWindow):
         for message in self.chat_messages:
             if message.get("role") == "user":
                 self._add_user_message(str(message.get("content", "")))
-            elif message.get("role") == "assistant":
+            elif message.get("role") == "assistant" and message.get("content"):
                 self._add_lumi_message(str(message.get("content", "")), show_logo=True)
         self._refresh_chat_history()
 
