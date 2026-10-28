@@ -13,8 +13,8 @@ from PySide6.QtCore import Qt, QSize, QThread, Signal, QSettings, QTimer
 from PySide6.QtGui import QAction, QFont, QIcon, QPixmap, QTextCursor
 from PySide6.QtWidgets import (
     QApplication, QComboBox, QFileDialog, QFrame, QHBoxLayout, QLabel,
-    QLineEdit, QListWidget, QMainWindow, QMessageBox, QPushButton, QSizePolicy,
-    QScrollArea, QStackedWidget, QTextEdit, QVBoxLayout, QWidget,
+    QLineEdit, QListWidget, QListWidgetItem, QMainWindow, QMessageBox, QPushButton, QSizePolicy,
+    QScrollArea, QStackedWidget, QTextEdit, QVBoxLayout, QWidget, QCheckBox,
 )
 
 from lumi import __version__
@@ -312,6 +312,8 @@ class LumiWindow(QMainWindow):
     def _set_sidebar_collapsed(self, collapsed: bool) -> None:
         self.sidebar_collapsed = collapsed
         self.nav_panel.setFixedWidth(68 if collapsed else 248)
+        if hasattr(self, "chat_history_panel"):
+            self.chat_history_panel.setVisible(collapsed and self.pages.currentIndex() == 0)
         nav_layout = self.nav_panel.layout()
         nav_layout.setContentsMargins(7 if collapsed else 14, 14 if collapsed else 20, 7 if collapsed else 14, 12 if collapsed else 16)
         nav_layout.setSpacing(7)
@@ -366,8 +368,7 @@ class LumiWindow(QMainWindow):
 
         self.chat_history_list = QListWidget()
         self.chat_history_list.setObjectName("chatHistoryList")
-        self.chat_history_list.addItem("История появится здесь")
-        self.chat_history_list.item(0).setFlags(Qt.ItemFlag.NoItemFlags)
+        self.chat_history_list.itemDoubleClicked.connect(self._open_chat_session)
         history_layout.addWidget(self.chat_history_list, 1)
         history_hint = QLabel("Сохранение истории будет добавлено отдельно.")
         history_hint.setObjectName("muted")
@@ -437,7 +438,7 @@ class LumiWindow(QMainWindow):
         footnote.setObjectName("muted")
         layout.addWidget(footnote)
         outer.addWidget(chat_area, 1)
-        self.chat_history_panel.setVisible(False)
+        self.chat_history_panel.setVisible(self.sidebar_collapsed)
         return page
 
     def _send_chat_message(self) -> None:
@@ -457,7 +458,7 @@ class LumiWindow(QMainWindow):
             return
         key = str(self.settings.value("anymodel/api_key", "")).strip()
         if not key:
-            QMessageBox.warning(self, "Нужен API-ключ", "Добавь ключ AnyModel в Настройки → Подключение ИИ.")
+            QMessageBox.warning(self, "Нужен API-ключ", "Добавь ключ AnyModel в Модели ИИ → Облачные модели.")
             return
         if self.api_worker is not None and self.api_worker.isRunning():
             return
@@ -469,7 +470,8 @@ class LumiWindow(QMainWindow):
         self.chat_status.setText("●  Lumi думает…")
         self.chat_status.setStyleSheet("color: #B8A5FF; font-size: 9pt;")
         model = str(self.settings.value("anymodel/model", "xai/grok-4.6"))
-        self.api_worker = AnyModelRequestWorker(key, model, list(self.chat_messages))
+        messages = [{"role": "system", "content": self._effective_system_prompt()}] + list(self.chat_messages)
+        self.api_worker = AnyModelRequestWorker(key, model, messages)
         self.api_worker.succeeded.connect(self._on_cloud_response)
         self.api_worker.failed.connect(self._on_cloud_error)
         self.api_worker.finished.connect(self._on_cloud_request_finished)
@@ -667,8 +669,8 @@ class LumiWindow(QMainWindow):
         card_layout.addWidget(status_title)
 
         description = QLabel(
-            "Grok 4.6 — основная модель для общения. Grok Build 0.1 предназначен для специализированных задач разработки. "
-            "Облачный выбор не отключает локальный режим по умолчанию."
+            "Выбирай локальные модели для работы на компьютере или облачные модели для вычислений на сервере. "
+            "Облачные запросы могут тарифицироваться провайдером."
         )
         description.setObjectName("pageSubtitle")
         description.setWordWrap(True)
@@ -677,7 +679,6 @@ class LumiWindow(QMainWindow):
 
         self.model_choice = QComboBox()
         self.model_choice.addItem("Grok 4.6 — основная модель", "xai/grok-4.6")
-        self.model_choice.addItem("Grok Build 0.1 — инструмент разработки", "xai/grok-build-0.1")
         saved_model = str(self.settings.value("anymodel/model", "xai/grok-4.6"))
         saved_index = self.model_choice.findData(saved_model)
         self.model_choice.setCurrentIndex(saved_index if saved_index >= 0 else 0)
@@ -686,7 +687,7 @@ class LumiWindow(QMainWindow):
         )
         card_layout.addWidget(self.model_choice)
 
-        self.model_file_label = QLabel("Grok 4.6 — основной помощник. Grok Build 0.1 — отдельный специализированный вариант для разработки.")
+        self.model_file_label = QLabel("Локальные модели можно выбрать как файл GGUF; запуск локального движка будет добавлен отдельно.")
         self.model_file_label.setObjectName("muted")
         self.model_file_label.setWordWrap(True)
         card_layout.addWidget(self.model_file_label)
@@ -696,12 +697,12 @@ class LumiWindow(QMainWindow):
         choose_model.clicked.connect(self._choose_model_file)
         model_buttons.addWidget(choose_model)
 
-        self.enable_model_button = QPushButton("Открыть настройки подключения")
+        self.enable_model_button = QPushButton("Облачные модели")
         self.enable_model_button.setObjectName("primaryButton")
-        self.enable_model_button.clicked.connect(lambda: self._show_page("settings"))
+        self.enable_model_button.clicked.connect(self._show_cloud_model_settings)
         model_buttons.addWidget(self.enable_model_button)
 
-        self.disable_model_button = QPushButton("Локальный режим")
+        self.disable_model_button = QPushButton("Локальные модели")
         self.disable_model_button.clicked.connect(self._set_local_mode)
         model_buttons.addWidget(self.disable_model_button)
         card_layout.addLayout(model_buttons)
@@ -710,7 +711,42 @@ class LumiWindow(QMainWindow):
         compatibility_button.clicked.connect(self._model_placeholder)
         card_layout.addWidget(compatibility_button)
 
-        layout.addWidget(card, 1)
+        cloud_card = QFrame()
+        cloud_card.setObjectName("card")
+        cloud_layout = QVBoxLayout(cloud_card)
+        cloud_layout.setContentsMargins(22, 18, 22, 18)
+        cloud_layout.setSpacing(10)
+        cloud_title = QLabel("Облачные модели · AnyModel")
+        cloud_title.setObjectName("section")
+        cloud_layout.addWidget(cloud_title)
+        cloud_description = QLabel("Для слабых компьютеров: вычисления выполняются на сервере. Нужны интернет и API-ключ; использование может быть платным.")
+        cloud_description.setObjectName("pageSubtitle")
+        cloud_description.setWordWrap(True)
+        cloud_layout.addWidget(cloud_description)
+        self.api_key_input = QLineEdit()
+        self.api_key_input.setEchoMode(QLineEdit.EchoMode.Password)
+        self.api_key_input.setPlaceholderText(
+            "Ключ сохранён — введи новый для замены" if str(self.settings.value("anymodel/api_key", "")).strip()
+            else "Вставь API-ключ AnyModel"
+        )
+        cloud_layout.addWidget(self.api_key_input)
+        self.cloud_mode_choice = QCheckBox("Использовать облачную модель (может быть платно)")
+        self.cloud_mode_choice.setChecked(str(self.settings.value("ai/mode", "local")) == "cloud")
+        cloud_layout.addWidget(self.cloud_mode_choice)
+        save_cloud_button = QPushButton("Сохранить настройки моделей")
+        save_cloud_button.setObjectName("primaryButton")
+        save_cloud_button.clicked.connect(self._save_api_settings)
+        cloud_layout.addWidget(save_cloud_button, 0, Qt.AlignmentFlag.AlignLeft)
+        cloud_hint = QLabel("Локальный режим остаётся выбранным по умолчанию. Реальный запуск локальных моделей пока не реализован.")
+        cloud_hint.setObjectName("muted")
+        cloud_hint.setWordWrap(True)
+        cloud_layout.addWidget(cloud_hint)
+        self.cloud_settings_card = cloud_card
+        self.models_overview_card = card
+        cloud_card.setVisible(False)
+        layout.addWidget(card)
+        layout.addWidget(cloud_card)
+        layout.addStretch(1)
         return page
 
     def _choose_model_file(self) -> None:
@@ -732,8 +768,36 @@ class LumiWindow(QMainWindow):
         QMessageBox.information(self, "Локальные модели Lumi AI",
             "Выбор и запуск локального движка ещё не реализованы. Локальный режим остаётся режимом по умолчанию.")
 
+    def _show_cloud_model_settings(self) -> None:
+        self._show_page("models")
+        self.models_overview_card.setVisible(False)
+        self.cloud_settings_card.setVisible(True)
+
+    def _effective_system_prompt(self) -> str:
+        base = (
+            "Ты — Люми, дружелюбная неоновая лисичка и умная помощница пользователя. "
+            "Всегда сохраняй личность Люми: будь вежливой, доброжелательной, внимательной и уважительной. "
+            "Отвечай естественно и по существу, признавай неопределённость и не выдумывай факты. "
+            "В технических вопросах будь точной, но не теряй тёплый характер."
+        )
+        extra = str(self.settings.value("personality/extra_prompt", "")).strip()
+        developer = str(self.settings.value("personality/developer_prompt", "")).strip()
+        parts = [base]
+        if extra:
+            parts.append("Дополнительные инструкции пользователя (сохраняй личность Люми):\\n" + extra)
+        if developer:
+            parts.append("Дополнительные инструкции разработчика; личность Люми и вежливость сохраняются:\\n" + developer)
+        return "\\n\\n".join(parts)
+
+    def _save_personality_settings(self) -> None:
+        self.settings.setValue("personality/extra_prompt", self.extra_prompt_input.toPlainText().strip())
+        QMessageBox.information(self, "Сохранено", "Дополнительные инструкции сохранены. Основная личность Люми не изменена.")
+
     def _set_local_mode(self) -> None:
         self.settings.setValue("ai/mode", "local")
+        if hasattr(self, "cloud_settings_card"):
+            self.cloud_settings_card.setVisible(False)
+            self.models_overview_card.setVisible(True)
         self.chat_status.setText("●  Локальный режим")
         self.chat_status.setStyleSheet("color: #7CEEFF; font-size: 9pt;")
         QMessageBox.information(self, "Локальный режим", "Lumi переключена в локальный режим. Облачные запросы не отправляются.")
@@ -743,7 +807,7 @@ class LumiWindow(QMainWindow):
         if key:
             self.settings.setValue("anymodel/api_key", key)
         self.settings.setValue("anymodel/model", self.model_choice.currentData())
-        mode = str(self.ai_mode_choice.currentData())
+        mode = "cloud" if self.cloud_mode_choice.isChecked() else "local"
         self.settings.setValue("ai/mode", mode)
         self.api_key_input.clear()
         self.api_key_input.setPlaceholderText("Ключ сохранён локально — введи новый для замены" if self.settings.value("anymodel/api_key", "") else "Вставь API-ключ AnyModel")
@@ -790,63 +854,31 @@ class LumiWindow(QMainWindow):
         updates_layout.addWidget(update_button, 0, Qt.AlignmentFlag.AlignLeft)
         layout.addWidget(updates_card)
 
-        api_card = QFrame()
-        api_card.setObjectName("card")
-        api_layout = QVBoxLayout(api_card)
-        api_layout.setContentsMargins(22, 22, 22, 22)
-        api_layout.setSpacing(10)
-        api_title = QLabel("Подключение ИИ")
-        api_title.setObjectName("section")
-        api_layout.addWidget(api_title)
-        api_description = QLabel(
-            "Единый API AnyModel для совместимых моделей. Ключ сохраняется в локальных настройках Lumi и не записывается в репозиторий. "
-            "В облачном режиме сообщения передаются сервису."
+        personality_card = QFrame()
+        personality_card.setObjectName("card")
+        personality_layout = QVBoxLayout(personality_card)
+        personality_layout.setContentsMargins(22, 22, 22, 22)
+        personality_layout.setSpacing(10)
+        personality_title = QLabel("Личность Люми")
+        personality_title.setObjectName("section")
+        personality_layout.addWidget(personality_title)
+        personality_description = QLabel(
+            "Основная личность Люми хранится в приложении и всегда добавляется к облачному запросу. "
+            "Дополнительные инструкции уточняют поведение, но не заменяют её характер."
         )
-        api_description.setObjectName("pageSubtitle")
-        api_description.setWordWrap(True)
-        api_layout.addWidget(api_description)
-        self.api_key_input = QLineEdit()
-        self.api_key_input.setEchoMode(QLineEdit.EchoMode.Password)
-        self.api_key_input.setPlaceholderText(
-            "Ключ сохранён — введи новый для замены" if str(self.settings.value("anymodel/api_key", "")).strip()
-            else "Вставь API-ключ AnyModel"
-        )
-        api_layout.addWidget(self.api_key_input)
-        self.ai_mode_choice = QComboBox()
-        self.ai_mode_choice.addItem("Локальный режим (по умолчанию)", "local")
-        self.ai_mode_choice.addItem("Облачный режим AnyModel", "cloud")
-        self.ai_mode_choice.setCurrentIndex(1 if str(self.settings.value("ai/mode", "local")) == "cloud" else 0)
-        api_layout.addWidget(self.ai_mode_choice)
-        save_api_button = QPushButton("Сохранить подключение")
-        save_api_button.setObjectName("primaryButton")
-        save_api_button.clicked.connect(self._save_api_settings)
-        api_layout.addWidget(save_api_button, 0, Qt.AlignmentFlag.AlignLeft)
-        local_hint = QLabel("В локальном режиме ключ не используется и сообщения не уходят в интернет. Настоящий локальный движок подключим отдельным этапом.")
-        local_hint.setObjectName("muted")
-        local_hint.setWordWrap(True)
-        api_layout.addWidget(local_hint)
-        layout.addWidget(api_card)
-
-        model_card = QFrame()
-        model_card.setObjectName("card")
-        model_layout = QVBoxLayout(model_card)
-        model_layout.setContentsMargins(22, 22, 22, 22)
-        model_layout.setSpacing(10)
-        model_title = QLabel("Поведение ИИ")
-        model_title.setObjectName("section")
-        model_layout.addWidget(model_title)
-        model_description = QLabel(
-            "Основная облачная модель — Grok 4.6. Grok Build 0.1 — специализированный вариант для разработки. "
-            "Локальный режим остаётся режимом по умолчанию."
-        )
-        model_description.setObjectName("pageSubtitle")
-        model_description.setWordWrap(True)
-        model_layout.addWidget(model_description)
-
-        self.autostart_model_checkbox = QPushButton("Вернуться в локальный режим")
-        self.autostart_model_checkbox.clicked.connect(self._set_local_mode)
-        model_layout.addWidget(self.autostart_model_checkbox, 0, Qt.AlignmentFlag.AlignLeft)
-        layout.addWidget(model_card)
+        personality_description.setObjectName("pageSubtitle")
+        personality_description.setWordWrap(True)
+        personality_layout.addWidget(personality_description)
+        self.extra_prompt_input = QTextEdit()
+        self.extra_prompt_input.setPlaceholderText("Дополнительные инструкции: предпочтения, формат ответов и рабочие привычки…")
+        self.extra_prompt_input.setPlainText(str(self.settings.value("personality/extra_prompt", "")))
+        self.extra_prompt_input.setMinimumHeight(110)
+        personality_layout.addWidget(self.extra_prompt_input)
+        save_prompt_button = QPushButton("Сохранить дополнительные инструкции")
+        save_prompt_button.setObjectName("primaryButton")
+        save_prompt_button.clicked.connect(self._save_personality_settings)
+        personality_layout.addWidget(save_prompt_button, 0, Qt.AlignmentFlag.AlignLeft)
+        layout.addWidget(personality_card)
         layout.addStretch(1)
 
         # Keep all settings reachable on short windows instead of clipping controls.
@@ -896,6 +928,8 @@ class LumiWindow(QMainWindow):
         if key not in indexes:
             return
         self.pages.setCurrentIndex(indexes[key])
+        if hasattr(self, "chat_history_panel"):
+            self.chat_history_panel.setVisible(self.sidebar_collapsed and key == "chat")
         for name, button in self.nav_buttons.items():
             button.setChecked(name == key)
 
