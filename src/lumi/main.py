@@ -48,7 +48,8 @@ QMainWindow, QWidget {
 QWidget#navPanel { background: #020D30; border-right: 1px solid #20263B; }
 QWidget#contentPanel { background: #0A0C16; }
 QFrame#historyPanel { background: #080F26; border: 1px solid #1D2B4A; border-radius: 14px; }
-QFrame#chatTranscript { background: #0C1222; border: 1px solid #202B45; border-radius: 16px; }
+QScrollArea#chatTranscript { background: #0C1222; border: 1px solid #202B45; border-radius: 16px; }
+QWidget#chatTranscriptContent { background: transparent; }
 QFrame#composer { background: #10182B; border: 1px solid #263653; border-radius: 14px; }
 QLabel#lumiMessage { background: #121E38; border: 1px solid #254B6B; border-radius: 12px; padding: 14px; color: #EAF6FF; }
 QListWidget#chatHistoryList { background: transparent; border: none; padding: 2px; }
