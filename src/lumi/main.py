@@ -45,6 +45,11 @@ QMainWindow, QWidget {
     background: #0A0C16; color: #F2F4FF;
     font-family: Segoe UI, sans-serif; font-size: 10pt;
 }
+/* Labels must not paint their own opaque background; this caused black bars
+   behind settings text and inside each chat message row. */
+QLabel { background: transparent; }
+QLabel#section, QLabel#pageSubtitle, QLabel#muted, QLabel#pageTitle,
+QLabel#subtitle, QLabel#brand { background: transparent; }
 QWidget#navPanel { background: #020D30; border-right: 1px solid #20263B; }
 QWidget#contentPanel { background: #0A0C16; }
 QFrame#historyPanel { background: #080F26; border: 1px solid #1D2B4A; border-radius: 14px; }
