@@ -825,7 +825,15 @@ class LumiWindow(QMainWindow):
         model_layout.addWidget(self.autostart_model_checkbox, 0, Qt.AlignmentFlag.AlignLeft)
         layout.addWidget(model_card)
         layout.addStretch(1)
-        return page
+
+        # Keep all settings reachable on short windows instead of clipping controls.
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        scroll.setWidget(page)
+        return scroll
 
     def _build_info_page(self, key: str, title: str, subtitle: str, body: str, icon_name: str) -> QWidget:
         page = QWidget()
