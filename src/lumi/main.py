@@ -99,17 +99,98 @@ QFrame#card { background: #101625; border: 1px solid #242E46; border-radius: 14p
 """
 
 
+NOTES_TOOL_DEFINITIONS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "list_notes",
+            "description": "Найти заметки или показать список заметок. Возвращает идентификаторы, названия и даты, но не полное содержимое.",
+            "parameters": {
+                "type": "object",
+                "properties": {"query": {"type": "string", "description": "Необязательная фраза для поиска по названию и тексту"}},
+                "required": [],
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "read_note",
+            "description": "Прочитать полное содержимое одной заметки по её ID. Сначала используй list_notes, если ID неизвестен.",
+            "parameters": {
+                "type": "object",
+                "properties": {"note_id": {"type": "integer", "description": "ID заметки"}},
+                "required": ["note_id"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "create_note",
+            "description": "Создать новую локальную заметку с названием и содержимым.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string", "description": "Название заметки"},
+                    "body": {"type": "string", "description": "Полный текст заметки"},
+                },
+                "required": ["title", "body"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "update_note",
+            "description": "Обновить название и/или текст существующей заметки. Сначала найди и прочитай нужную заметку.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "note_id": {"type": "integer", "description": "ID заметки для изменения"},
+                    "title": {"type": "string", "description": "Новое название; если не указано, оставить прежнее"},
+                    "body": {"type": "string", "description": "Новый полный текст; если не указан, оставить прежний"},
+                },
+                "required": ["note_id"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "delete_note",
+            "description": "Запросить удаление заметки по ID. Приложение обязательно попросит пользователя подтвердить удаление.",
+            "parameters": {
+                "type": "object",
+                "properties": {"note_id": {"type": "integer", "description": "ID заметки для удаления"}},
+                "required": ["note_id"],
+                "additionalProperties": False,
+            },
+        },
+    },
+]
+
+
 class AnyModelRequestWorker(QThread):
-    """Perform AnyModel HTTP requests away from the UI thread."""
-    succeeded = Signal(str)
+    """Perform an AnyModel chat/tool request away from the UI thread."""
+    succeeded = Signal(object)
     failed = Signal(str)
 
-    def __init__(self, api_key: str, model_id: str, messages: list[dict[str, str]]) -> None:
+    def __init__(self, api_key: str, model_id: str, messages: list[dict], tools: list[dict] | None = None) -> None:
         super().__init__()
         self.api_key, self.model_id, self.messages = api_key, model_id, messages
+        self.tools = tools or NOTES_TOOL_DEFINITIONS
 
     def run(self) -> None:
-        payload = json.dumps({"model": self.model_id, "messages": self.messages, "stream": False}).encode("utf-8")
+        payload_data = {"model": self.model_id, "messages": self.messages, "stream": False}
+        if self.tools:
+            payload_data["tools"] = self.tools
+            payload_data["tool_choice"] = "auto"
+        payload = json.dumps(payload_data, ensure_ascii=False).encode("utf-8")
         request = urllib.request.Request(
             "https://anymodel.org/v1/chat/completions",
             data=payload,
@@ -128,13 +209,16 @@ class AnyModelRequestWorker(QThread):
         try:
             with urllib.request.urlopen(request, timeout=90) as response:
                 data = json.loads(response.read().decode("utf-8"))
-            answer = data["choices"][0]["message"]["content"]
+            message = dict(data["choices"][0]["message"])
+            answer = message.get("content")
             if isinstance(answer, list):
-                answer = "\\n".join(str(p.get("text", "")) if isinstance(p, dict) else str(p) for p in answer)
-            answer = str(answer).strip()
-            if not answer:
-                raise ValueError("Сервис вернул пустой ответ.")
-            self.succeeded.emit(answer)
+                message["content"] = "\\n".join(
+                    str(part.get("text", "")) if isinstance(part, dict) else str(part)
+                    for part in answer
+                )
+            if not message.get("tool_calls") and not str(message.get("content") or "").strip():
+                raise ValueError("Сервис вернул пустой ответ без вызова инструмента.")
+            self.succeeded.emit(message)
         except urllib.error.HTTPError as exc:
             try: detail = exc.read().decode("utf-8", errors="replace")[:500]
             except Exception: detail = str(exc)
@@ -513,7 +597,135 @@ class LumiWindow(QMainWindow):
         if follow_latest:
             QTimer.singleShot(0, lambda: bar.setValue(bar.maximum()))
 
-    def _on_cloud_response(self, answer: str) -> None:
+    def _start_tool_followup(self) -> None:
+        """Ask the model to continue after a tool result, without unlocking the chat."""
+        key = str(self.settings.value("anymodel/api_key", "")).strip()
+        model = str(self.settings.value("anymodel/model", "xai/grok-4.6"))
+        messages = [{"role": "system", "content": self._effective_system_prompt()}] + list(self.chat_messages)
+        self.api_worker = AnyModelRequestWorker(key, model, messages)
+        self.api_worker.succeeded.connect(self._on_cloud_response)
+        self.api_worker.failed.connect(self._on_cloud_error)
+        self.api_worker.finished.connect(self._on_cloud_request_finished)
+        self.api_worker.start()
+
+    def _run_note_tool(self, name: str, arguments: dict) -> dict:
+        """Run one explicitly registered note tool and return a JSON-safe result."""
+        try:
+            if name == "list_notes":
+                query = str(arguments.get("query", "")).strip()
+                notes = self.store.list_notes(query)
+                return {
+                    "ok": True,
+                    "count": len(notes),
+                    "notes": [
+                        {"id": int(note["id"]), "title": str(note["title"]), "updated_at": str(note["updated_at"])}
+                        for note in notes[:100]
+                    ],
+                    "truncated": len(notes) > 100,
+                }
+            if name == "read_note":
+                note_id = int(arguments["note_id"])
+                note = next((item for item in self.store.list_notes() if int(item["id"]) == note_id), None)
+                if note is None:
+                    return {"ok": False, "error": f"Заметка с ID {note_id} не найдена."}
+                return {"ok": True, "note": note}
+            if name == "create_note":
+                title = str(arguments.get("title", "")).strip()
+                body = str(arguments.get("body", ""))
+                if not title:
+                    return {"ok": False, "error": "Для новой заметки нужно название."}
+                note_id = self.store.save_note(title, body)
+                note = next((item for item in self.store.list_notes() if int(item["id"]) == note_id), None)
+                if note is None:
+                    return {"ok": False, "error": "Запись не найдена после сохранения."}
+                self._reload_notes()
+                return {"ok": True, "action": "created", "note": note}
+            if name == "update_note":
+                note_id = int(arguments["note_id"])
+                note = next((item for item in self.store.list_notes() if int(item["id"]) == note_id), None)
+                if note is None:
+                    return {"ok": False, "error": f"Заметка с ID {note_id} не найдена."}
+                title = str(arguments["title"]) if "title" in arguments else str(note["title"])
+                body = str(arguments["body"]) if "body" in arguments else str(note["body"])
+                self.store.save_note(title, body, note_id)
+                updated = next((item for item in self.store.list_notes() if int(item["id"]) == note_id), None)
+                if updated is None:
+                    return {"ok": False, "error": "Не удалось проверить изменённую заметку."}
+                self._reload_notes()
+                return {"ok": True, "action": "updated", "note": updated}
+            if name == "delete_note":
+                note_id = int(arguments["note_id"])
+                note = next((item for item in self.store.list_notes() if int(item["id"]) == note_id), None)
+                if note is None:
+                    return {"ok": False, "error": f"Заметка с ID {note_id} не найдена."}
+                answer = QMessageBox.question(
+                    self,
+                    "Подтверждение удаления",
+                    f"Люми просит удалить заметку «{note['title']}» (ID {note_id}).\\n\\nУдалить её безвозвратно?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.No,
+                )
+                if answer != QMessageBox.StandardButton.Yes:
+                    return {"ok": False, "cancelled": True, "error": "Пользователь отменил удаление."}
+                self.store.delete_note(note_id)
+                still_exists = any(int(item["id"]) == note_id for item in self.store.list_notes())
+                if still_exists:
+                    return {"ok": False, "error": "После удаления заметка всё ещё найдена."}
+                self._reload_notes()
+                return {"ok": True, "action": "deleted", "note_id": note_id, "title": str(note["title"])}
+            return {"ok": False, "error": f"Инструмент «{name}» не зарегистрирован."}
+        except (KeyError, TypeError, ValueError) as exc:
+            return {"ok": False, "error": f"Некорректные аргументы инструмента: {exc}"}
+        except Exception as exc:
+            return {"ok": False, "error": f"Не удалось выполнить инструмент: {exc}"}
+
+    def _on_cloud_response(self, message: object) -> None:
+        if not isinstance(message, dict):
+            self._on_cloud_error("Не удалось прочитать ответ модели: неожиданный формат.")
+            return
+        tool_calls = message.get("tool_calls") or []
+        if tool_calls:
+            self._tool_round_count += 1
+            if self._tool_round_count > 6:
+                self._tool_round_active = False
+                self._add_lumi_message("Я остановила цепочку действий: достигнут безопасный лимит вызовов инструментов. Попробуй уточнить задачу.", show_logo=True)
+                self.chat_status.setText("●  Остановлено")
+                self._commit_active_chat()
+                return
+            assistant_message = {
+                "role": "assistant",
+                "content": message.get("content"),
+                "tool_calls": tool_calls,
+            }
+            self.chat_messages.append(assistant_message)
+            for call in tool_calls:
+                call_id = str(call.get("id", ""))
+                function = call.get("function") or {}
+                name = str(function.get("name", ""))
+                raw_arguments = function.get("arguments", "{}")
+                try:
+                    arguments = json.loads(raw_arguments) if isinstance(raw_arguments, str) else raw_arguments
+                    if not isinstance(arguments, dict):
+                        raise ValueError("Ожидался объект аргументов.")
+                    result = self._run_note_tool(name, arguments)
+                except (TypeError, ValueError, json.JSONDecodeError) as exc:
+                    result = {"ok": False, "error": f"Не удалось разобрать аргументы инструмента: {exc}"}
+                self.chat_messages.append({
+                    "role": "tool",
+                    "tool_call_id": call_id,
+                    "name": name,
+                    "content": json.dumps(result, ensure_ascii=False),
+                })
+            self._commit_active_chat()
+            self.chat_status.setText("●  Выполняю действие…")
+            self._start_tool_followup()
+            return
+
+        answer = str(message.get("content") or "").strip()
+        if not answer:
+            self._on_cloud_error("Модель вернула пустой ответ.")
+            return
+        self._tool_round_active = False
         self.chat_messages.append({"role": "assistant", "content": answer})
         self._commit_active_chat()
         self._add_lumi_message(answer, show_logo=True)
@@ -521,6 +733,7 @@ class LumiWindow(QMainWindow):
         self.chat_status.setStyleSheet("color: #7CEEFF; font-size: 9pt;")
 
     def _on_cloud_error(self, message: str) -> None:
+        self._tool_round_active = False
         self._add_lumi_message(message, show_logo=True)
         self.chat_status.setText("●  Ошибка подключения")
         self.chat_status.setStyleSheet("color: #FF9C9C; font-size: 9pt;")
@@ -529,9 +742,10 @@ class LumiWindow(QMainWindow):
             self._commit_active_chat()
 
     def _on_cloud_request_finished(self) -> None:
-        self.chat_input.setEnabled(True)
-        self.send_chat_button.setEnabled(True)
-        self.chat_input.setFocus()
+        if not self._tool_round_active:
+            self.chat_input.setEnabled(True)
+            self.send_chat_button.setEnabled(True)
+            self.chat_input.setFocus()
 
     def _add_lumi_message(self, text: str, *, show_logo: bool = True) -> QWidget:
         """Add a Lumi response bubble; safe to call with plain text returned by the internal AI API.
