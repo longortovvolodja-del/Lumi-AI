@@ -165,6 +165,8 @@ class LumiWindow(QMainWindow):
         self.store = NotesStore()
         self.settings = QSettings("LumiAI", "Lumi")
         self.chat_messages: list[dict[str, str]] = []
+        self.chat_sessions: list[dict[str, object]] = []
+        self.active_chat_title = "Новый чат"
         self.api_worker: AnyModelRequestWorker | None = None
         self.current_note_id: int | None = None
         self.nav_buttons: dict[str, QPushButton] = {}
@@ -369,6 +371,7 @@ class LumiWindow(QMainWindow):
         self.chat_history_list = QListWidget()
         self.chat_history_list.setObjectName("chatHistoryList")
         self.chat_history_list.itemDoubleClicked.connect(self._open_chat_session)
+        self._refresh_chat_history()
         history_layout.addWidget(self.chat_history_list, 1)
         history_hint = QLabel("Сохранение истории будет добавлено отдельно.")
         history_hint.setObjectName("muted")
@@ -465,6 +468,9 @@ class LumiWindow(QMainWindow):
         self._add_user_message(text)
         self.chat_input.clear()
         self.chat_messages.append({"role": "user", "content": text})
+        if self.active_chat_title == "Новый чат":
+            title = " ".join(text.split())
+            self.active_chat_title = title[:42] + ("…" if len(title) > 42 else "")
         self.send_chat_button.setEnabled(False)
         self.chat_input.setEnabled(False)
         self.chat_status.setText("●  Lumi думает…")
@@ -570,9 +576,48 @@ class LumiWindow(QMainWindow):
         self._add_lumi_message(text, show_logo=True)
 
     def _new_chat_visual(self) -> None:
+        if self.chat_messages:
+            self.chat_sessions.insert(0, {"title": self.active_chat_title, "messages": list(self.chat_messages)})
+        self.chat_messages = []
+        self.active_chat_title = "Новый чат"
+        self._clear_chat_transcript()
+        self._add_lumi_message("Привет! ✨ Я Люми — твоя неоновая помощница с лисьим характером. Чем займёмся?", show_logo=True)
+        self._refresh_chat_history()
+        self.chat_input.clear()
+
+    def _clear_chat_transcript(self) -> None:
+        while self.chat_messages_layout.count():
+            item = self.chat_messages_layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+        self.chat_messages_layout.addStretch(1)
+
+    def _refresh_chat_history(self) -> None:
         self.chat_history_list.clear()
-        self.chat_history_list.addItem("Новый чат — пока пусто")
-        self.chat_history_list.item(0).setFlags(Qt.ItemFlag.NoItemFlags)
+        for session in self.chat_sessions:
+            self.chat_history_list.addItem(str(session.get("title", "Чат")))
+        if not self.chat_sessions:
+            empty = QListWidgetItem("История появится после создания чата")
+            empty.setFlags(Qt.ItemFlag.NoItemFlags)
+            self.chat_history_list.addItem(empty)
+
+    def _open_chat_session(self, item: QListWidgetItem) -> None:
+        index = self.chat_history_list.row(item)
+        if index < 0 or index >= len(self.chat_sessions):
+            return
+        if self.chat_messages:
+            self.chat_sessions.insert(0, {"title": self.active_chat_title, "messages": list(self.chat_messages)})
+        session = self.chat_sessions[index]
+        self.chat_messages = list(session.get("messages", []))
+        self.active_chat_title = str(session.get("title", "Чат"))
+        self._clear_chat_transcript()
+        for message in self.chat_messages:
+            if message.get("role") == "user":
+                self._add_user_message(str(message.get("content", "")))
+            elif message.get("role") == "assistant":
+                self._add_lumi_message(str(message.get("content", "")), show_logo=True)
+        self._refresh_chat_history()
 
     def _filter_chat_history(self, query: str) -> None:
         needle = query.strip().casefold()
