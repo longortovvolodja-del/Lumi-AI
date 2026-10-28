@@ -829,10 +829,10 @@ class LumiWindow(QMainWindow):
         developer = str(self.settings.value("personality/developer_prompt", "")).strip()
         parts = [base]
         if extra:
-            parts.append("Дополнительные инструкции пользователя (сохраняй личность Люми):\\n" + extra)
+            parts.append("Дополнительные инструкции пользователя (сохраняй личность Люми):\n" + extra)
         if developer:
-            parts.append("Дополнительные инструкции разработчика; личность Люми и вежливость сохраняются:\\n" + developer)
-        return "\\n\\n".join(parts)
+            parts.append("Дополнительные инструкции разработчика; личность Люми и вежливость сохраняются:\n" + developer)
+        return "\n\n".join(parts)
 
     def _save_personality_settings(self) -> None:
         self.settings.setValue("personality/extra_prompt", self.extra_prompt_input.toPlainText().strip())
@@ -868,7 +868,7 @@ class LumiWindow(QMainWindow):
         layout.setContentsMargins(0, 8, 0, 0)
         layout.setSpacing(18)
         layout.addLayout(self._page_heading(
-            "Настройки", "Локальный режим включён по умолчанию. AnyModel подключается только по твоему выбору."
+            "Настройки", "Настройки приложения и дополнительные инструкции для Люми."
         ))
 
         updates_card = QFrame()
