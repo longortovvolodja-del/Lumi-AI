@@ -165,7 +165,11 @@ class LumiWindow(QMainWindow):
         self.store = NotesStore()
         self.settings = QSettings("LumiAI", "Lumi")
         self.chat_messages: list[dict[str, str]] = []
-        self.chat_sessions: list[dict[str, object]] = []
+        try:
+            self.chat_sessions: list[dict[str, object]] = json.loads(str(self.settings.value("chat/sessions", "[]")))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            self.chat_sessions = []
+        self.active_chat_session: dict[str, object] | None = None
         self.active_chat_title = "Новый чат"
         self.api_worker: AnyModelRequestWorker | None = None
         self.current_note_id: int | None = None
@@ -471,6 +475,7 @@ class LumiWindow(QMainWindow):
         if self.active_chat_title == "Новый чат":
             title = " ".join(text.split())
             self.active_chat_title = title[:42] + ("…" if len(title) > 42 else "")
+        self._commit_active_chat()
         self.send_chat_button.setEnabled(False)
         self.chat_input.setEnabled(False)
         self.chat_status.setText("●  Lumi думает…")
@@ -510,6 +515,7 @@ class LumiWindow(QMainWindow):
 
     def _on_cloud_response(self, answer: str) -> None:
         self.chat_messages.append({"role": "assistant", "content": answer})
+        self._commit_active_chat()
         self._add_lumi_message(answer, show_logo=True)
         self.chat_status.setText("●  AnyModel · Grok 4.6")
         self.chat_status.setStyleSheet("color: #7CEEFF; font-size: 9pt;")
@@ -520,6 +526,7 @@ class LumiWindow(QMainWindow):
         self.chat_status.setStyleSheet("color: #FF9C9C; font-size: 9pt;")
         if self.chat_messages and self.chat_messages[-1].get("role") == "user":
             self.chat_messages.pop()
+            self._commit_active_chat()
 
     def _on_cloud_request_finished(self) -> None:
         self.chat_input.setEnabled(True)
@@ -576,14 +583,32 @@ class LumiWindow(QMainWindow):
         self._add_lumi_message(text, show_logo=True)
 
     def _new_chat_visual(self) -> None:
-        if self.chat_messages:
-            self.chat_sessions.insert(0, {"title": self.active_chat_title, "messages": list(self.chat_messages)})
+        self._commit_active_chat()
         self.chat_messages = []
+        self.active_chat_session = None
         self.active_chat_title = "Новый чат"
         self._clear_chat_transcript()
         self._add_lumi_message("Привет! ✨ Я Люми — твоя неоновая помощница с лисьим характером. Чем займёмся?", show_logo=True)
         self._refresh_chat_history()
         self.chat_input.clear()
+
+    def _commit_active_chat(self) -> None:
+        if not self.chat_messages:
+            return
+        if self.active_chat_session is None:
+            self.active_chat_session = {"title": self.active_chat_title, "messages": list(self.chat_messages)}
+            self.chat_sessions.insert(0, self.active_chat_session)
+        else:
+            self.active_chat_session["title"] = self.active_chat_title
+            self.active_chat_session["messages"] = list(self.chat_messages)
+            if self.active_chat_session in self.chat_sessions:
+                self.chat_sessions.remove(self.active_chat_session)
+            self.chat_sessions.insert(0, self.active_chat_session)
+        self._persist_chat_sessions()
+        self._refresh_chat_history()
+
+    def _persist_chat_sessions(self) -> None:
+        self.settings.setValue("chat/sessions", json.dumps(self.chat_sessions, ensure_ascii=False))
 
     def _clear_chat_transcript(self) -> None:
         while self.chat_messages_layout.count():
@@ -606,11 +631,11 @@ class LumiWindow(QMainWindow):
         index = self.chat_history_list.row(item)
         if index < 0 or index >= len(self.chat_sessions):
             return
-        if self.chat_messages:
-            self.chat_sessions.insert(0, {"title": self.active_chat_title, "messages": list(self.chat_messages)})
-        session = self.chat_sessions[index]
-        self.chat_messages = list(session.get("messages", []))
-        self.active_chat_title = str(session.get("title", "Чат"))
+        target = self.chat_sessions[index]
+        self._commit_active_chat()
+        self.active_chat_session = target
+        self.chat_messages = [dict(message) for message in target.get("messages", [])]
+        self.active_chat_title = str(target.get("title", "Чат"))
         self._clear_chat_transcript()
         for message in self.chat_messages:
             if message.get("role") == "user":
@@ -761,9 +786,14 @@ class LumiWindow(QMainWindow):
         cloud_layout = QVBoxLayout(cloud_card)
         cloud_layout.setContentsMargins(22, 18, 22, 18)
         cloud_layout.setSpacing(10)
+        cloud_title_row = QHBoxLayout()
         cloud_title = QLabel("Облачные модели · AnyModel")
         cloud_title.setObjectName("section")
-        cloud_layout.addWidget(cloud_title)
+        cloud_title_row.addWidget(cloud_title, 1)
+        back_to_models = QPushButton("← Все модели")
+        back_to_models.clicked.connect(self._show_local_model_overview)
+        cloud_title_row.addWidget(back_to_models)
+        cloud_layout.addLayout(cloud_title_row)
         cloud_description = QLabel("Для слабых компьютеров: вычисления выполняются на сервере. Нужны интернет и API-ключ; использование может быть платным.")
         cloud_description.setObjectName("pageSubtitle")
         cloud_description.setWordWrap(True)
@@ -817,6 +847,10 @@ class LumiWindow(QMainWindow):
         self._show_page("models")
         self.models_overview_card.setVisible(False)
         self.cloud_settings_card.setVisible(True)
+
+    def _show_local_model_overview(self) -> None:
+        self.models_overview_card.setVisible(True)
+        self.cloud_settings_card.setVisible(False)
 
     def _effective_system_prompt(self) -> str:
         base = (
@@ -973,6 +1007,8 @@ class LumiWindow(QMainWindow):
         if key not in indexes:
             return
         self.pages.setCurrentIndex(indexes[key])
+        if key == "models" and hasattr(self, "models_overview_card"):
+            self._show_local_model_overview()
         if hasattr(self, "chat_history_panel"):
             self.chat_history_panel.setVisible(self.sidebar_collapsed and key == "chat")
         for name, button in self.nav_buttons.items():
