@@ -9,12 +9,12 @@ import json
 import urllib.error
 import urllib.request
 
-from PySide6.QtCore import Qt, QSize, QThread, Signal, QSettings
+from PySide6.QtCore import Qt, QSize, QThread, Signal, QSettings, QTimer
 from PySide6.QtGui import QAction, QFont, QIcon, QPixmap, QTextCursor
 from PySide6.QtWidgets import (
     QApplication, QComboBox, QFileDialog, QFrame, QHBoxLayout, QLabel,
     QLineEdit, QListWidget, QMainWindow, QMessageBox, QPushButton, QSizePolicy,
-    QStackedWidget, QTextEdit, QVBoxLayout, QWidget,
+    QScrollArea, QStackedWidget, QTextEdit, QVBoxLayout, QWidget,
 )
 
 from lumi import __version__
@@ -369,13 +369,24 @@ class LumiWindow(QMainWindow):
         heading.addWidget(self.chat_status, 0, Qt.AlignmentFlag.AlignVCenter)
         layout.addLayout(heading)
 
-        self.chat_transcript = QFrame()
+        # Scrollable transcript: messages move, while the composer stays fixed below.
+        self.chat_transcript = QScrollArea()
         self.chat_transcript.setObjectName("chatTranscript")
-        transcript_layout = QVBoxLayout(self.chat_transcript)
+        self.chat_transcript.setWidgetResizable(True)
+        self.chat_transcript.setFrameShape(QFrame.Shape.NoFrame)
+        self.chat_transcript.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.chat_transcript.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.chat_transcript.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+
+        self.chat_transcript_content = QWidget()
+        self.chat_transcript_content.setObjectName("chatTranscriptContent")
+        transcript_layout = QVBoxLayout(self.chat_transcript_content)
         transcript_layout.setContentsMargins(22, 22, 22, 22)
         transcript_layout.setSpacing(14)
+        transcript_layout.addStretch(1)
         # Keep the message layout reusable for responses received from Lumi's internal AI API.
         self.chat_messages_layout = transcript_layout
+        self.chat_transcript.setWidget(self.chat_transcript_content)
         self._add_lumi_message(
             "Привет! ✨\n"
             "Я Lumi — твоя неоновая помощница с лисьим характером.\n\n"
@@ -454,7 +465,16 @@ class LumiWindow(QMainWindow):
         bubble.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         bubble.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         row_layout.addWidget(bubble, 1)
-        self.chat_messages_layout.addWidget(row)
+        self._append_chat_message(row)
+
+    def _append_chat_message(self, widget: QWidget) -> None:
+        """Append a message and follow it only when the reader was already at the bottom."""
+        bar = self.chat_transcript.verticalScrollBar()
+        follow_latest = bar.maximum() - bar.value() <= 32
+        # Insert before the trailing stretch so messages stay packed at the top.
+        self.chat_messages_layout.insertWidget(self.chat_messages_layout.count() - 1, widget)
+        if follow_latest:
+            QTimer.singleShot(0, lambda: bar.setValue(bar.maximum()))
 
     def _on_cloud_response(self, answer: str) -> None:
         self.chat_messages.append({"role": "assistant", "content": answer})
@@ -516,7 +536,7 @@ class LumiWindow(QMainWindow):
         bubble.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         bubble_row.addWidget(bubble, 1)
         row_layout.addLayout(bubble_row)
-        self.chat_messages_layout.addWidget(row_widget)
+        self._append_chat_message(row_widget)
         return row_widget
 
     def display_lumi_response(self, text: str) -> None:
