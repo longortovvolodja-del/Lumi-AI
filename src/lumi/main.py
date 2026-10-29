@@ -15,7 +15,7 @@ from PySide6.QtGui import QAction, QFont, QIcon, QPixmap, QTextCursor
 from PySide6.QtWidgets import (
     QApplication, QComboBox, QFileDialog, QFrame, QHBoxLayout, QLabel,
     QLineEdit, QListWidget, QListWidgetItem, QMainWindow, QMessageBox, QPushButton, QSizePolicy,
-    QScrollArea, QStackedWidget, QTextEdit, QVBoxLayout, QWidget, QCheckBox, QToolButton,
+    QScrollArea, QStackedWidget, QTextEdit, QTextBrowser, QVBoxLayout, QWidget, QCheckBox, QToolButton,
 )
 
 from lumi import __version__
@@ -177,9 +177,10 @@ NOTES_TOOL_DEFINITIONS = [
 
 
 class AnyModelRequestWorker(QThread):
-    """Perform an AnyModel chat/tool request away from the UI thread."""
+    """Stream an AnyModel chat/tool response away from the UI thread."""
     succeeded = Signal(object)
     failed = Signal(str)
+    token_received = Signal(str)
 
     def __init__(self, api_key: str, model_id: str, messages: list[dict], tools: list[dict] | None = None) -> None:
         super().__init__()
@@ -187,7 +188,7 @@ class AnyModelRequestWorker(QThread):
         self.tools = tools or NOTES_TOOL_DEFINITIONS
 
     def run(self) -> None:
-        payload_data = {"model": self.model_id, "messages": self.messages, "stream": False}
+        payload_data = {"model": self.model_id, "messages": self.messages, "stream": True}
         if self.tools:
             payload_data["tools"] = self.tools
             payload_data["tool_choice"] = "auto"
@@ -197,7 +198,7 @@ class AnyModelRequestWorker(QThread):
             data=payload,
             headers={
                 "Content-Type": "application/json",
-                "Accept": "application/json",
+                "Accept": "text/event-stream",
                 "Authorization": f"Bearer {self.api_key}",
                 "User-Agent": (
                     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -208,17 +209,78 @@ class AnyModelRequestWorker(QThread):
             method="POST",
         )
         try:
+            content_parts: list[str] = []
+            tool_calls: dict[int, dict] = {}
+            finish_reason = None
             with urllib.request.urlopen(request, timeout=90) as response:
-                data = json.loads(response.read().decode("utf-8"))
-            message = dict(data["choices"][0]["message"])
-            answer = message.get("content")
-            if isinstance(answer, list):
-                message["content"] = "\\n".join(
-                    str(part.get("text", "")) if isinstance(part, dict) else str(part)
-                    for part in answer
-                )
+                content_type = response.headers.get("Content-Type", "").lower()
+                if "text/event-stream" not in content_type:
+                    # Some OpenAI-compatible gateways ignore stream=True. Keep a
+                    # compatible fallback instead of breaking the chat.
+                    data = json.loads(response.read().decode("utf-8"))
+                    message = dict(data["choices"][0]["message"])
+                    answer = message.get("content")
+                    if isinstance(answer, list):
+                        message["content"] = "\n".join(
+                            str(part.get("text", "")) if isinstance(part, dict) else str(part)
+                            for part in answer
+                        )
+                    if not message.get("tool_calls") and not str(message.get("content") or "").strip():
+                        raise ValueError("Сервис вернул пустой ответ без вызова инструмента.")
+                    self.succeeded.emit(message)
+                    return
+
+                buffer = ""
+                while True:
+                    chunk = response.read(2048)
+                    if not chunk:
+                        break
+                    buffer += chunk.decode("utf-8", errors="replace")
+                    while "\n" in buffer:
+                        line, buffer = buffer.split("\n", 1)
+                        line = line.strip()
+                        if not line or line.startswith(":") or not line.startswith("data:"):
+                            continue
+                        data_text = line[5:].strip()
+                        if data_text == "[DONE]":
+                            buffer = ""
+                            break
+                        try:
+                            packet = json.loads(data_text)
+                        except json.JSONDecodeError:
+                            continue
+                        choices = packet.get("choices") or []
+                        if not choices:
+                            continue
+                        choice = choices[0]
+                        delta = choice.get("delta") or {}
+                        piece = delta.get("content")
+                        if isinstance(piece, str) and piece:
+                            content_parts.append(piece)
+                            self.token_received.emit(piece)
+                        for item in delta.get("tool_calls") or []:
+                            index = int(item.get("index", 0))
+                            target = tool_calls.setdefault(index, {
+                                "id": "", "type": "function",
+                                "function": {"name": "", "arguments": ""},
+                            })
+                            if item.get("id"):
+                                target["id"] += str(item["id"])
+                            if item.get("type"):
+                                target["type"] = item["type"]
+                            function = item.get("function") or {}
+                            if function.get("name"):
+                                target["function"]["name"] += str(function["name"])
+                            if function.get("arguments"):
+                                target["function"]["arguments"] += str(function["arguments"])
+                        if choice.get("finish_reason") is not None:
+                            finish_reason = choice.get("finish_reason")
+
+            message = {"role": "assistant", "content": "".join(content_parts) or None}
+            if tool_calls:
+                message["tool_calls"] = [tool_calls[i] for i in sorted(tool_calls)]
             if not message.get("tool_calls") and not str(message.get("content") or "").strip():
-                raise ValueError("Сервис вернул пустой ответ без вызова инструмента.")
+                raise ValueError(f"Сервис вернул пустой ответ без вызова инструмента (finish_reason={finish_reason}).")
             self.succeeded.emit(message)
         except urllib.error.HTTPError as exc:
             try: detail = exc.read().decode("utf-8", errors="replace")[:500]
@@ -582,7 +644,10 @@ class LumiWindow(QMainWindow):
         self._activity_events = [{"title": "Запрос принят", "detail": "Сообщение передано выбранной облачной модели.", "status": "ok"}]
         self._activity_started_at = time.perf_counter()
         self._create_live_activity_block()
+        self._streaming_text = ""
+        self._streaming_widget = None
         self.api_worker = AnyModelRequestWorker(key, model, messages)
+        self.api_worker.token_received.connect(self._on_cloud_chunk)
         self.api_worker.succeeded.connect(self._on_cloud_response)
         self.api_worker.failed.connect(self._on_cloud_error)
         self.api_worker.finished.connect(self._on_cloud_request_finished)
@@ -738,7 +803,10 @@ class LumiWindow(QMainWindow):
         key = str(self.settings.value("anymodel/api_key", "")).strip()
         model = str(self.settings.value("anymodel/model", "xai/grok-4.6"))
         messages = [{"role": "system", "content": self._effective_system_prompt()}] + list(self.chat_messages)
+        self._streaming_text = ""
+        self._streaming_widget = None
         self.api_worker = AnyModelRequestWorker(key, model, messages)
+        self.api_worker.token_received.connect(self._on_cloud_chunk)
         self.api_worker.succeeded.connect(self._on_cloud_response)
         self.api_worker.failed.connect(self._on_cloud_error)
         self.api_worker.finished.connect(self._on_cloud_request_finished)
@@ -867,6 +935,21 @@ class LumiWindow(QMainWindow):
         except Exception as exc:
             return {"ok": False, "error": f"Не удалось выполнить инструмент: {exc}"}
 
+    def _on_cloud_chunk(self, chunk: str) -> None:
+        """Render streamed text in the existing Lumi bubble as soon as tokens arrive."""
+        if not chunk:
+            return
+        self._streaming_text = getattr(self, "_streaming_text", "") + chunk
+        if self._streaming_widget is None:
+            self._streaming_widget = self._add_lumi_message("", show_logo=True)
+        bubble = getattr(self._streaming_widget, "_lumi_bubble", None)
+        if bubble is not None:
+            bubble.setMarkdown(self._streaming_text)
+            # Keep the latest token visible without forcing users back down if they scrolled up.
+            bar = self.chat_transcript.verticalScrollBar()
+            if bar.maximum() - bar.value() <= 80:
+                QTimer.singleShot(0, lambda: bar.setValue(bar.maximum()))
+
     def _on_cloud_response(self, message: object) -> None:
         if not isinstance(message, dict):
             self._on_cloud_error("Не удалось прочитать ответ модели: неожиданный формат.")
@@ -932,7 +1015,10 @@ class LumiWindow(QMainWindow):
         self._finish_live_activity(success=True)
         self.chat_messages.append({"role": "assistant", "content": answer})
         self._commit_active_chat()
-        self._add_lumi_message(answer, show_logo=True)
+        if self._streaming_widget is None or self._streaming_text != answer:
+            self._add_lumi_message(answer, show_logo=True)
+        self._streaming_widget = None
+        self._streaming_text = ""
         if self._pending_activity_duration is not None:
             self._append_chat_message(self._pending_activity_duration)
             self._pending_activity_duration = None
@@ -989,17 +1075,25 @@ class LumiWindow(QMainWindow):
 
         bubble_row = QHBoxLayout()
         bubble_row.setContentsMargins(76 if show_logo else 24, 0, 0, 0)
-        bubble = QLabel(message_text)
+        bubble = QTextBrowser()
         bubble.setObjectName("lumiMessage")
-        bubble.setWordWrap(True)
-        bubble.setTextFormat(Qt.TextFormat.PlainText)
+        bubble.setReadOnly(True)
+        bubble.setOpenExternalLinks(False)
+        bubble.setOpenLinks(False)
+        bubble.setFrameShape(QFrame.Shape.NoFrame)
+        bubble.setStyleSheet(
+            "QTextBrowser#lumiMessage { background: #121E38; border: 1px solid #254B6B; "
+            "border-radius: 12px; padding: 10px; color: #EAF6FF; }"
+            "QTextBrowser#lumiMessage a { color: #7CEEFF; }"
+        )
         bubble.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         bubble.setMaximumWidth(900)
         bubble.setMinimumWidth(0)
         bubble.setMinimumHeight(48)
-        bubble.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        bubble.setMarkdown(message_text)
         bubble_row.addWidget(bubble, 1)
         row_layout.addLayout(bubble_row)
+        row_widget._lumi_bubble = bubble
         self._append_chat_message(row_widget)
         return row_widget
 
