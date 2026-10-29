@@ -956,6 +956,12 @@ class LumiWindow(QMainWindow):
             return
         tool_calls = message.get("tool_calls") or []
         if tool_calls:
+            # Tool-call rounds are not user-facing final answers. Remove any partial
+            # text bubble if the provider streamed commentary before the tool call.
+            if self._streaming_widget is not None:
+                self._streaming_widget.deleteLater()
+            self._streaming_widget = None
+            self._streaming_text = ""
             self._tool_round_count += 1
             if self._tool_round_count > 6:
                 self._tool_round_active = False
@@ -1015,8 +1021,12 @@ class LumiWindow(QMainWindow):
         self._finish_live_activity(success=True)
         self.chat_messages.append({"role": "assistant", "content": answer})
         self._commit_active_chat()
-        if self._streaming_widget is None or self._streaming_text != answer:
+        if self._streaming_widget is None:
             self._add_lumi_message(answer, show_logo=True)
+        else:
+            bubble = getattr(self._streaming_widget, "_lumi_bubble", None)
+            if bubble is not None:
+                bubble.setMarkdown(answer)
         self._streaming_widget = None
         self._streaming_text = ""
         if self._pending_activity_duration is not None:
@@ -1026,6 +1036,10 @@ class LumiWindow(QMainWindow):
         self.chat_status.setStyleSheet("color: #7CEEFF; font-size: 9pt;")
 
     def _on_cloud_error(self, message: str) -> None:
+        if self._streaming_widget is not None:
+            self._streaming_widget.deleteLater()
+        self._streaming_widget = None
+        self._streaming_text = ""
         self._tool_round_active = False
         self._finish_live_activity(success=False)
         self._add_lumi_message(message, show_logo=True)
@@ -1078,6 +1092,9 @@ class LumiWindow(QMainWindow):
         bubble = QTextBrowser()
         bubble.setObjectName("lumiMessage")
         bubble.setReadOnly(True)
+        bubble.setSizeAdjustPolicy(QTextBrowser.SizeAdjustPolicy.AdjustToContents)
+        bubble.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        bubble.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         bubble.setOpenExternalLinks(False)
         bubble.setOpenLinks(False)
         bubble.setFrameShape(QFrame.Shape.NoFrame)
