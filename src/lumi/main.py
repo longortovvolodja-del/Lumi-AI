@@ -336,12 +336,11 @@ class MarkdownMessageBrowser(QTextBrowser):
         # Separate a bold section title from the numbered item that a model
         # sometimes appends on the same line, avoiding a merged list section.
         text = re.sub(
-            r"(?<!\\n)(\\*\\*[^*\\n]{2,60}\\*\\*)\\s+(?=(?:[1-9]\\d?\\.)\\s)",
-            r"\\1\n\n",
+            r"(?<!\n)(\*\*[^*\n]{2,60}\*\*)\s+(?=(?:[1-9]\d?\.)\s)",
+            r"\1\n\n",
             text,
         )
         return text
-
     def set_markdown(self, markdown: str) -> None:
         self.setMarkdown(self._normalize_markdown(markdown))
         self._fit_to_document()
