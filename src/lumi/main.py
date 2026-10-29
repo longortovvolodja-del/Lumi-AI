@@ -230,51 +230,50 @@ class AnyModelRequestWorker(QThread):
                     self.succeeded.emit(message)
                     return
 
-                buffer = ""
-                while True:
-                    chunk = response.read(2048)
-                    if not chunk:
+                # Read SSE one line at a time. response.read(2048) may wait for
+                # a large buffer or EOF on some gateways, making streaming appear broken.
+                stream_done = False
+                while not stream_done:
+                    raw_line = response.readline()
+                    if not raw_line:
                         break
-                    buffer += chunk.decode("utf-8", errors="replace")
-                    while "\n" in buffer:
-                        line, buffer = buffer.split("\n", 1)
-                        line = line.strip()
-                        if not line or line.startswith(":") or not line.startswith("data:"):
-                            continue
-                        data_text = line[5:].strip()
-                        if data_text == "[DONE]":
-                            buffer = ""
-                            break
-                        try:
-                            packet = json.loads(data_text)
-                        except json.JSONDecodeError:
-                            continue
-                        choices = packet.get("choices") or []
-                        if not choices:
-                            continue
-                        choice = choices[0]
-                        delta = choice.get("delta") or {}
-                        piece = delta.get("content")
-                        if isinstance(piece, str) and piece:
-                            content_parts.append(piece)
-                            self.token_received.emit(piece)
-                        for item in delta.get("tool_calls") or []:
-                            index = int(item.get("index", 0))
-                            target = tool_calls.setdefault(index, {
-                                "id": "", "type": "function",
-                                "function": {"name": "", "arguments": ""},
-                            })
-                            if item.get("id"):
-                                target["id"] += str(item["id"])
-                            if item.get("type"):
-                                target["type"] = item["type"]
-                            function = item.get("function") or {}
-                            if function.get("name"):
-                                target["function"]["name"] += str(function["name"])
-                            if function.get("arguments"):
-                                target["function"]["arguments"] += str(function["arguments"])
-                        if choice.get("finish_reason") is not None:
-                            finish_reason = choice.get("finish_reason")
+                    line = raw_line.decode("utf-8", errors="replace").strip()
+                    if not line or line.startswith(":") or not line.startswith("data:"):
+                        continue
+                    data_text = line[5:].strip()
+                    if data_text == "[DONE]":
+                        stream_done = True
+                        continue
+                    try:
+                        packet = json.loads(data_text)
+                    except json.JSONDecodeError:
+                        continue
+                    choices = packet.get("choices") or []
+                    if not choices:
+                        continue
+                    choice = choices[0]
+                    delta = choice.get("delta") or {}
+                    piece = delta.get("content")
+                    if isinstance(piece, str) and piece:
+                        content_parts.append(piece)
+                        self.token_received.emit(piece)
+                    for item in delta.get("tool_calls") or []:
+                        index = int(item.get("index", 0))
+                        target = tool_calls.setdefault(index, {
+                            "id": "", "type": "function",
+                            "function": {"name": "", "arguments": ""},
+                        })
+                        if item.get("id"):
+                            target["id"] += str(item["id"])
+                        if item.get("type"):
+                            target["type"] = item["type"]
+                        function = item.get("function") or {}
+                        if function.get("name"):
+                            target["function"]["name"] += str(function["name"])
+                        if function.get("arguments"):
+                            target["function"]["arguments"] += str(function["arguments"])
+                    if choice.get("finish_reason") is not None:
+                        finish_reason = choice.get("finish_reason")
 
             message = {"role": "assistant", "content": "".join(content_parts) or None}
             if tool_calls:
@@ -308,6 +307,10 @@ class MarkdownMessageBrowser(QTextBrowser):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setReadOnly(True)
+        self.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+            | Qt.TextInteractionFlag.LinksAccessibleByMouse
+        )
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -325,8 +328,22 @@ class MarkdownMessageBrowser(QTextBrowser):
         self.setMinimumWidth(0)
         self.setMarkdown("")
 
+    @staticmethod
+    def _normalize_markdown(markdown: str) -> str:
+        import re
+
+        text = str(markdown).replace("\\r\\n", "\n").replace("\\n", "\n")
+        # Separate a bold section title from the numbered item that a model
+        # sometimes appends on the same line, avoiding a merged list section.
+        text = re.sub(
+            r"(?<!\\n)(\\*\\*[^*\\n]{2,60}\\*\\*)\\s+(?=(?:[1-9]\\d?\\.)\\s)",
+            r"\\1\n\n",
+            text,
+        )
+        return text
+
     def set_markdown(self, markdown: str) -> None:
-        self.setMarkdown(markdown)
+        self.setMarkdown(self._normalize_markdown(markdown))
         self._fit_to_document()
 
     def resizeEvent(self, event) -> None:
@@ -765,8 +782,12 @@ class LumiWindow(QMainWindow):
         layout.addWidget(header)
         layout.addWidget(details)
         wrapper = QWidget()
+        wrapper.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        wrapper.setStyleSheet("background: transparent;")
+        wrapper.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         wrapper_layout = QHBoxLayout(wrapper)
         wrapper_layout.setContentsMargins(76, 0, 24, 0)
+        wrapper_layout.setSpacing(0)
         wrapper_layout.addWidget(container, 1)
         self._activity_container = container
         self._activity_header = header
