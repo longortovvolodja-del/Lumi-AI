@@ -181,6 +181,7 @@ class AnyModelRequestWorker(QThread):
     succeeded = Signal(object)
     failed = Signal(str)
     token_received = Signal(str)
+    transport_status = Signal(str)
 
     def __init__(self, api_key: str, model_id: str, messages: list[dict], tools: list[dict] | None = None) -> None:
         super().__init__()
@@ -215,9 +216,19 @@ class AnyModelRequestWorker(QThread):
             with urllib.request.urlopen(request, timeout=90) as response:
                 content_type = response.headers.get("Content-Type", "").lower()
                 if "text/event-stream" not in content_type:
-                    # Some OpenAI-compatible gateways ignore stream=True. Keep a
-                    # compatible fallback instead of breaking the chat.
+                    # Report the actual transport: a JSON response is inherently
+                    # buffered, so the UI cannot stream it even if stream=True was sent.
+                    self.transport_status.emit(
+                        f"Поток не предоставлен сервером (Content-Type: {content_type or 'не указан'}); получен обычный ответ."
+                    )
                     data = json.loads(response.read().decode("utf-8"))
+                else:
+                    self.transport_status.emit("Потоковая передача SSE подключена.")
+                    # Some OpenAI-compatible gateways send the whole SSE body at once;
+                    # line-by-line parsing below cannot fix server-side buffering.
+                    # Keep consuming individual events as soon as the socket exposes them.
+                    pass
+                if "text/event-stream" not in content_type:
                     message = dict(data["choices"][0]["message"])
                     answer = message.get("content")
                     if isinstance(answer, list):
@@ -705,6 +716,7 @@ class LumiWindow(QMainWindow):
         self._streaming_widget = None
         self.api_worker = AnyModelRequestWorker(key, model, messages)
         self.api_worker.token_received.connect(self._on_cloud_chunk)
+        self.api_worker.transport_status.connect(self._on_transport_status)
         self.api_worker.succeeded.connect(self._on_cloud_response)
         self.api_worker.failed.connect(self._on_cloud_error)
         self.api_worker.finished.connect(self._on_cloud_request_finished)
@@ -868,6 +880,7 @@ class LumiWindow(QMainWindow):
         self._streaming_widget = None
         self.api_worker = AnyModelRequestWorker(key, model, messages)
         self.api_worker.token_received.connect(self._on_cloud_chunk)
+        self.api_worker.transport_status.connect(self._on_transport_status)
         self.api_worker.succeeded.connect(self._on_cloud_response)
         self.api_worker.failed.connect(self._on_cloud_error)
         self.api_worker.finished.connect(self._on_cloud_request_finished)
@@ -995,6 +1008,12 @@ class LumiWindow(QMainWindow):
             return {"ok": False, "error": f"Некорректные аргументы инструмента: {exc}"}
         except Exception as exc:
             return {"ok": False, "error": f"Не удалось выполнить инструмент: {exc}"}
+
+    def _on_transport_status(self, status: str) -> None:
+        """Show whether AnyModel actually returned an SSE stream or a buffered JSON response."""
+        if not status:
+            return
+        self._record_activity("Передача ответа", status, "running" if "SSE" in status else "error")
 
     def _on_cloud_chunk(self, chunk: str) -> None:
         """Render streamed text in the existing Lumi bubble as soon as tokens arrive."""
