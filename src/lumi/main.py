@@ -57,7 +57,7 @@ QFrame#historyPanel { background: #080F26; border: 1px solid #1D2B4A; border-rad
 QScrollArea#chatTranscript { background: #0C1222; border: 1px solid #202B45; border-radius: 16px; }
 QWidget#chatTranscriptContent { background: transparent; }
 QFrame#composer { background: #10182B; border: 1px solid #263653; border-radius: 14px; }
-QLabel#lumiMessage { background: #121E38; border: 1px solid #254B6B; border-radius: 12px; padding: 14px; color: #EAF6FF; }
+QTextBrowser#lumiMessage { background: #121E38; border: 1px solid #254B6B; border-radius: 12px; padding: 10px; color: #EAF6FF; }
 QListWidget#chatHistoryList { background: transparent; border: none; padding: 2px; }
 QLabel#brand { color: #7CEEFF; font-size: 18pt; font-weight: 700; }
 QLabel#subtitle { color: #8D97B8; font-size: 9pt; }
@@ -300,6 +300,47 @@ class AnyModelRequestWorker(QThread):
             self.failed.emit(f"Не удалось прочитать ответ AnyModel: {exc}")
         except Exception as exc:
             self.failed.emit(f"Ошибка запроса: {exc}")
+
+
+class MarkdownMessageBrowser(QTextBrowser):
+    """Markdown bubble whose height follows rendered content instead of clipping it."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setReadOnly(True)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setOpenExternalLinks(False)
+        self.setOpenLinks(False)
+        self.setFrameShape(QFrame.Shape.NoFrame)
+        self.document().setDocumentMargin(0)
+        self.setStyleSheet(
+            "QTextBrowser#lumiMessage { background: #121E38; border: 1px solid #254B6B; "
+            "border-radius: 12px; padding: 10px; color: #EAF6FF; }"
+            "QTextBrowser#lumiMessage a { color: #7CEEFF; }"
+        )
+        self.setMinimumHeight(48)
+        self.setMaximumWidth(900)
+        self.setMinimumWidth(0)
+        self.setMarkdown("")
+
+    def set_markdown(self, markdown: str) -> None:
+        self.setMarkdown(markdown)
+        self._fit_to_document()
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._fit_to_document()
+
+    def _fit_to_document(self) -> None:
+        # Reflow at the actual viewport width so long Markdown lines wrap and
+        # the widget grows vertically as tokens arrive.
+        width = max(80, self.viewport().width())
+        self.document().setTextWidth(width)
+        height = int(self.document().size().height() + 24)
+        self.setMinimumHeight(max(48, height))
+        self.setFixedHeight(max(48, height))
 
 
 class LumiWindow(QMainWindow):
@@ -944,7 +985,7 @@ class LumiWindow(QMainWindow):
             self._streaming_widget = self._add_lumi_message("", show_logo=True)
         bubble = getattr(self._streaming_widget, "_lumi_bubble", None)
         if bubble is not None:
-            bubble.setMarkdown(self._streaming_text)
+            bubble.set_markdown(self._streaming_text)
             # Keep the latest token visible without forcing users back down if they scrolled up.
             bar = self.chat_transcript.verticalScrollBar()
             if bar.maximum() - bar.value() <= 80:
@@ -1026,7 +1067,7 @@ class LumiWindow(QMainWindow):
         else:
             bubble = getattr(self._streaming_widget, "_lumi_bubble", None)
             if bubble is not None:
-                bubble.setMarkdown(answer)
+                bubble.set_markdown(answer)
         self._streaming_widget = None
         self._streaming_text = ""
         if self._pending_activity_duration is not None:
@@ -1059,29 +1100,26 @@ class LumiWindow(QMainWindow):
             self.chat_input.setFocus()
 
     def _add_lumi_message(self, text: str, *, show_logo: bool = True) -> QWidget:
-        """Add a Lumi response bubble; safe to call with plain text returned by the internal AI API.
-
-        QLabel wraps long lines to the available width. Real newline characters from the
-        API are preserved. Normalize literal backslash-n sequences too, for older/mock
-        responses that may contain escaped newlines.
-        """
+        """Add a response bubble that wraps text and resizes to rendered Markdown."""
         message_text = str(text).replace("\\r\\n", "\n").replace("\\n", "\n")
         row_widget = QWidget()
+        row_widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         row_layout = QVBoxLayout(row_widget)
         row_layout.setContentsMargins(0, 0, 0, 0)
-        row_layout.setSpacing(8)
+        row_layout.setSpacing(4)
 
         if show_logo:
             logo_row = QHBoxLayout()
             logo_row.setContentsMargins(24, 0, 0, 0)
+            logo_row.setSpacing(0)
             avatar = QLabel()
-            avatar.setFixedSize(126, 62)
+            avatar.setFixedSize(112, 52)
             avatar.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
             avatar.setStyleSheet("background: transparent;")
             avatar.setAutoFillBackground(False)
             avatar.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
             avatar.setPixmap(QPixmap(str(resource_path("assets/Люми — неоновый лисий логотип.png"))).scaled(
-                122, 60, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
+                108, 50, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
             ))
             logo_row.addWidget(avatar, 0, Qt.AlignmentFlag.AlignLeft)
             logo_row.addStretch(1)
@@ -1089,26 +1127,11 @@ class LumiWindow(QMainWindow):
 
         bubble_row = QHBoxLayout()
         bubble_row.setContentsMargins(76 if show_logo else 24, 0, 0, 0)
-        bubble = QTextBrowser()
+        bubble_row.setSpacing(0)
+        bubble = MarkdownMessageBrowser()
         bubble.setObjectName("lumiMessage")
-        bubble.setReadOnly(True)
-        bubble.setSizeAdjustPolicy(QTextBrowser.SizeAdjustPolicy.AdjustToContents)
-        bubble.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        bubble.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        bubble.setOpenExternalLinks(False)
-        bubble.setOpenLinks(False)
-        bubble.setFrameShape(QFrame.Shape.NoFrame)
-        bubble.setStyleSheet(
-            "QTextBrowser#lumiMessage { background: #121E38; border: 1px solid #254B6B; "
-            "border-radius: 12px; padding: 10px; color: #EAF6FF; }"
-            "QTextBrowser#lumiMessage a { color: #7CEEFF; }"
-        )
-        bubble.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-        bubble.setMaximumWidth(900)
-        bubble.setMinimumWidth(0)
-        bubble.setMinimumHeight(48)
-        bubble.setMarkdown(message_text)
-        bubble_row.addWidget(bubble, 1)
+        bubble.set_markdown(message_text)
+        bubble_row.addWidget(bubble, 1, Qt.AlignmentFlag.AlignTop)
         row_layout.addLayout(bubble_row)
         row_widget._lumi_bubble = bubble
         self._append_chat_message(row_widget)
