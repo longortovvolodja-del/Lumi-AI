@@ -541,9 +541,12 @@ class LumiWindow(QMainWindow):
 
     def _toggle_chat_history(self) -> None:
         self.chat_history_collapsed = not self.chat_history_collapsed
-        self.chat_history_panel.setVisible(not self.chat_history_collapsed and self.pages.currentIndex() == 0)
-        self.history_toggle_button.setText("›" if self.chat_history_collapsed else "‹")
-        self.history_toggle_button.setToolTip("Развернуть список чатов" if self.chat_history_collapsed else "Свернуть список чатов")
+        visible = not self.chat_history_collapsed and self.pages.currentIndex() == 0
+        self.chat_history_panel.setVisible(visible)
+        self.history_toggle_button.setText("‹")
+        self.history_toggle_button.setToolTip("Свернуть список чатов")
+        self.chat_history_reopen_button.setVisible(not visible)
+        self.chat_history_reopen_button.setToolTip("Открыть историю чатов")
 
     def _expand_sidebar(self) -> None:
         if self.sidebar_collapsed:
@@ -631,6 +634,12 @@ class LumiWindow(QMainWindow):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(16)
         heading = QHBoxLayout()
+        self.chat_history_reopen_button = QPushButton("☷")
+        self.chat_history_reopen_button.setObjectName("navToggle")
+        self.chat_history_reopen_button.setFixedSize(38, 38)
+        self.chat_history_reopen_button.setToolTip("Свернуть список чатов" if not self.chat_history_collapsed else "Открыть историю чатов")
+        self.chat_history_reopen_button.clicked.connect(self._toggle_chat_history)
+        heading.addWidget(self.chat_history_reopen_button, 0, Qt.AlignmentFlag.AlignTop)
         heading_text = QVBoxLayout()
         title = QLabel("Чат с Lumi")
         title.setObjectName("pageTitle")
@@ -689,6 +698,7 @@ class LumiWindow(QMainWindow):
         layout.addWidget(footnote)
         outer.addWidget(chat_area, 1)
         self.chat_history_panel.setVisible(not self.chat_history_collapsed)
+        self.chat_history_reopen_button.setVisible(self.chat_history_collapsed)
         return page
 
     def _send_chat_message(self) -> None:
@@ -1753,7 +1763,9 @@ class LumiWindow(QMainWindow):
         if key == "models" and hasattr(self, "models_overview_card"):
             self._show_local_model_overview()
         if hasattr(self, "chat_history_panel"):
-            self.chat_history_panel.setVisible(not self.chat_history_collapsed and key == "chat")
+            visible = not self.chat_history_collapsed and key == "chat"
+            self.chat_history_panel.setVisible(visible)
+            self.chat_history_reopen_button.setVisible(self.chat_history_collapsed and key == "chat")
         for name, button in self.nav_buttons.items():
             button.setChecked(name == key)
 
