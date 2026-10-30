@@ -889,7 +889,6 @@ class LumiWindow(QMainWindow):
             self._activity_header.setText("✓  Действия выполнены  ▾" if success else "!  Выполнение завершено  ▾")
         self._activity_started_at = 0.0
         # Keep the log available for inspection, but do not repeat the duration in its header.
-        self._activity_container = None
         self._activity_header = None
         self._activity_details = None
         self._activity_details_layout = None
@@ -906,10 +905,15 @@ class LumiWindow(QMainWindow):
             return
         if self._activity_message_layout is not None and self._activity_message_widget is not None:
             label.setContentsMargins(88, 2, 36, 4)
-            self._activity_message_layout.addWidget(label)
+            activity_layout = self._activity_container.layout() if self._activity_container is not None else None
+            if activity_layout is not None:
+                activity_layout.addWidget(label)
+            else:
+                self._activity_message_layout.addWidget(label)
         else:
             self._append_chat_message(label)
         self._pending_activity_duration = None
+        self._activity_container = None
         self._activity_message_widget = None
         self._activity_message_layout = None
 
