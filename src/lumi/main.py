@@ -1055,6 +1055,23 @@ class LumiWindow(QMainWindow):
             return
         self._record_activity("Передача ответа", status, "running" if "SSE" in status else "error")
 
+    def _clear_streaming_message(self) -> None:
+        """Clear only the streamed answer bubble while preserving the activity shell."""
+        widget = self._streaming_widget
+        if widget is None:
+            return
+        if widget is self._activity_message_widget:
+            response_widget = getattr(widget, "_lumi_response_widget", None)
+            if response_widget is not None:
+                response_widget.setParent(None)
+                response_widget.deleteLater()
+            widget._lumi_bubble = None
+            widget._lumi_response_widget = None
+        else:
+            widget.deleteLater()
+        self._streaming_widget = None
+        self._streaming_text = ""
+
     def _on_cloud_chunk(self, chunk: str) -> None:
         """Render streamed text in the existing Lumi bubble as soon as tokens arrive."""
         if not chunk:
@@ -1078,18 +1095,13 @@ class LumiWindow(QMainWindow):
         if tool_calls:
             # Tool-call rounds are not user-facing final answers. Remove any partial
             # text bubble if the provider streamed commentary before the tool call.
-            if self._streaming_widget is not None:
-                self._streaming_widget.deleteLater()
-            self._streaming_widget = None
-            self._streaming_text = ""
+            self._clear_streaming_message()
             self._tool_round_count += 1
             if self._tool_round_count > 6:
                 self._tool_round_active = False
                 self._finish_live_activity(success=False)
                 self._add_lumi_message("Я остановила цепочку действий: достигнут безопасный лимит вызовов инструментов. Попробуй уточнить задачу.", show_logo=True)
-                if self._pending_activity_duration is not None:
-                    self._append_chat_message(self._pending_activity_duration)
-                    self._pending_activity_duration = None
+                        self._append_pending_activity_duration()
                 self.chat_status.setText("●  Остановлено")
                 self._commit_active_chat()
                 return
@@ -1154,10 +1166,7 @@ class LumiWindow(QMainWindow):
         self.chat_status.setStyleSheet("color: #7CEEFF; font-size: 9pt;")
 
     def _on_cloud_error(self, message: str) -> None:
-        if self._streaming_widget is not None:
-            self._streaming_widget.deleteLater()
-        self._streaming_widget = None
-        self._streaming_text = ""
+        self._clear_streaming_message()
         self._tool_round_active = False
         self._finish_live_activity(success=False)
         self._add_lumi_message(message, show_logo=True)
@@ -1211,6 +1220,8 @@ class LumiWindow(QMainWindow):
         row_widget._lumi_bubble = bubble
         if self._activity_message_layout is not None and self._activity_message_widget is not None:
             self._activity_message_layout.addWidget(row_widget)
+            self._activity_message_widget._lumi_bubble = bubble
+            self._activity_message_widget._lumi_response_widget = row_widget
             return self._activity_message_widget
         self._append_chat_message(row_widget)
         return row_widget
