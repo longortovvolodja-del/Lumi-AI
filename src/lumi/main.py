@@ -1753,7 +1753,7 @@ class LumiWindow(QMainWindow):
         if key == "models" and hasattr(self, "models_overview_card"):
             self._show_local_model_overview()
         if hasattr(self, "chat_history_panel"):
-            self.chat_history_panel.setVisible(self.sidebar_collapsed and key == "chat")
+            self.chat_history_panel.setVisible(not self.chat_history_collapsed and key == "chat")
         for name, button in self.nav_buttons.items():
             button.setChecked(name == key)
 
