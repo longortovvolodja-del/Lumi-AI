@@ -1101,7 +1101,7 @@ class LumiWindow(QMainWindow):
                 self._tool_round_active = False
                 self._finish_live_activity(success=False)
                 self._add_lumi_message("Я остановила цепочку действий: достигнут безопасный лимит вызовов инструментов. Попробуй уточнить задачу.", show_logo=True)
-                        self._append_pending_activity_duration()
+                self._append_pending_activity_duration()
                 self.chat_status.setText("●  Остановлено")
                 self._commit_active_chat()
                 return
