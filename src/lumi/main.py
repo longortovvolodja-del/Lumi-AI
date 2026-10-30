@@ -13,7 +13,7 @@ import urllib.request
 from PySide6.QtCore import Qt, QSize, QThread, Signal, QSettings, QTimer
 from PySide6.QtGui import QAction, QFont, QIcon, QPixmap, QTextCursor
 from PySide6.QtWidgets import (
-    QApplication, QComboBox, QFileDialog, QFrame, QHBoxLayout, QLabel,
+    QApplication, QComboBox, QFileDialog, QFrame, QHBoxLayout, QLabel, QInputDialog, QMenu,
     QLineEdit, QListWidget, QListWidgetItem, QMainWindow, QMessageBox, QPushButton, QSizePolicy,
     QScrollArea, QStackedWidget, QTextEdit, QTextBrowser, QVBoxLayout, QWidget, QCheckBox, QToolButton,
 )
@@ -402,6 +402,7 @@ class LumiWindow(QMainWindow):
         self.current_note_id: int | None = None
         self.nav_buttons: dict[str, QPushButton] = {}
         self.sidebar_collapsed = False
+        self.chat_history_collapsed = False
         self._build_ui()
         self._reload_notes()
         self._show_page("chat")
@@ -538,6 +539,12 @@ class LumiWindow(QMainWindow):
     def _toggle_sidebar(self) -> None:
         self._set_sidebar_collapsed(not self.sidebar_collapsed)
 
+    def _toggle_chat_history(self) -> None:
+        self.chat_history_collapsed = not self.chat_history_collapsed
+        self.chat_history_panel.setVisible(not self.chat_history_collapsed and self.pages.currentIndex() == 0)
+        self.history_toggle_button.setText("›" if self.chat_history_collapsed else "‹")
+        self.history_toggle_button.setToolTip("Развернуть список чатов" if self.chat_history_collapsed else "Свернуть список чатов")
+
     def _expand_sidebar(self) -> None:
         if self.sidebar_collapsed:
             self._set_sidebar_collapsed(False)
@@ -546,7 +553,7 @@ class LumiWindow(QMainWindow):
         self.sidebar_collapsed = collapsed
         self.nav_panel.setFixedWidth(68 if collapsed else 248)
         if hasattr(self, "chat_history_panel"):
-            self.chat_history_panel.setVisible(collapsed and self.pages.currentIndex() == 0)
+            self.chat_history_panel.setVisible(not self.chat_history_collapsed and self.pages.currentIndex() == 0)
         nav_layout = self.nav_panel.layout()
         nav_layout.setContentsMargins(7 if collapsed else 14, 14 if collapsed else 20, 7 if collapsed else 14, 12 if collapsed else 16)
         nav_layout.setSpacing(7)
@@ -580,17 +587,24 @@ class LumiWindow(QMainWindow):
 
         self.chat_history_panel = QFrame()
         self.chat_history_panel.setObjectName("historyPanel")
-        self.chat_history_panel.setFixedWidth(238)
+        self.chat_history_panel.setFixedWidth(300)
         history_layout = QVBoxLayout(self.chat_history_panel)
         history_layout.setContentsMargins(12, 14, 12, 12)
         history_layout.setSpacing(12)
+        history_heading = QHBoxLayout()
         history_title = QLabel("Твои чаты")
         history_title.setObjectName("section")
-        history_layout.addWidget(history_title)
+        history_heading.addWidget(history_title, 1)
+        self.history_toggle_button = QPushButton("‹")
+        self.history_toggle_button.setObjectName("navToggle")
+        self.history_toggle_button.setToolTip("Свернуть список чатов")
+        self.history_toggle_button.clicked.connect(self._toggle_chat_history)
+        history_heading.addWidget(self.history_toggle_button)
+        history_layout.addLayout(history_heading)
 
         self.new_chat_button = QPushButton("＋  Новый чат")
         self.new_chat_button.setObjectName("primaryButton")
-        self.new_chat_button.setToolTip("Начать новый чат (пока демонстрационный режим)")
+        self.new_chat_button.setToolTip("Начать новый чат")
         self.new_chat_button.clicked.connect(self._new_chat_visual)
         history_layout.addWidget(self.new_chat_button)
 
@@ -602,9 +616,11 @@ class LumiWindow(QMainWindow):
         self.chat_history_list = QListWidget()
         self.chat_history_list.setObjectName("chatHistoryList")
         self.chat_history_list.itemDoubleClicked.connect(self._open_chat_session)
+        self.chat_history_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.chat_history_list.customContextMenuRequested.connect(self._show_chat_context_menu)
         self._refresh_chat_history()
         history_layout.addWidget(self.chat_history_list, 1)
-        history_hint = QLabel("Сохранение истории будет добавлено отдельно.")
+        history_hint = QLabel("История чатов хранится локально на этом компьютере.")
         history_hint.setObjectName("muted")
         history_hint.setWordWrap(True)
         history_layout.addWidget(history_hint)
@@ -672,7 +688,7 @@ class LumiWindow(QMainWindow):
         footnote.setObjectName("muted")
         layout.addWidget(footnote)
         outer.addWidget(chat_area, 1)
-        self.chat_history_panel.setVisible(self.sidebar_collapsed)
+        self.chat_history_panel.setVisible(not self.chat_history_collapsed)
         return page
 
     def _send_chat_message(self) -> None:
@@ -1279,16 +1295,19 @@ class LumiWindow(QMainWindow):
 
     def _refresh_chat_history(self) -> None:
         self.chat_history_list.clear()
-        for session in self.chat_sessions:
-            self.chat_history_list.addItem(str(session.get("title", "Чат")))
+        for index, session in enumerate(self.chat_sessions):
+            item = QListWidgetItem(str(session.get("title", "Чат")))
+            item.setData(Qt.ItemDataRole.UserRole, index)
+            item.setToolTip(str(session.get("title", "Чат")))
+            self.chat_history_list.addItem(item)
         if not self.chat_sessions:
             empty = QListWidgetItem("История появится после создания чата")
             empty.setFlags(Qt.ItemFlag.NoItemFlags)
             self.chat_history_list.addItem(empty)
 
     def _open_chat_session(self, item: QListWidgetItem) -> None:
-        index = self.chat_history_list.row(item)
-        if index < 0 or index >= len(self.chat_sessions):
+        index = item.data(Qt.ItemDataRole.UserRole)
+        if not isinstance(index, int) or index < 0 or index >= len(self.chat_sessions):
             return
         target = self.chat_sessions[index]
         self._commit_active_chat()
@@ -1302,6 +1321,39 @@ class LumiWindow(QMainWindow):
             elif message.get("role") == "assistant" and message.get("content"):
                 self._add_lumi_message(str(message.get("content", "")), show_logo=True)
         self._refresh_chat_history()
+
+    def _show_chat_context_menu(self, position) -> None:
+        item = self.chat_history_list.itemAt(position)
+        if item is None:
+            return
+        index = item.data(Qt.ItemDataRole.UserRole)
+        if not isinstance(index, int) or index < 0 or index >= len(self.chat_sessions):
+            return
+        menu = QMenu(self)
+        rename_action = menu.addAction("Переименовать")
+        delete_action = menu.addAction("Удалить чат")
+        chosen = menu.exec(self.chat_history_list.mapToGlobal(position))
+        if chosen == rename_action:
+            current = str(self.chat_sessions[index].get("title", "Чат"))
+            title, accepted = QInputDialog.getText(self, "Переименовать чат", "Название:", text=current)
+            title = title.strip()
+            if accepted and title:
+                self.chat_sessions[index]["title"] = title[:80]
+                if self.active_chat_session is self.chat_sessions[index]:
+                    self.active_chat_title = title[:80]
+                self._persist_chat_sessions()
+                self._refresh_chat_history()
+        elif chosen == delete_action:
+            answer = QMessageBox.question(self, "Удалить чат", f"Удалить чат «{self.chat_sessions[index].get('title', 'Чат')}»?", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No)
+            if answer == QMessageBox.StandardButton.Yes:
+                target = self.chat_sessions.pop(index)
+                if self.active_chat_session is target:
+                    self.active_chat_session = None
+                    self.active_chat_title = "Новый чат"
+                    self.chat_messages = []
+                    self._clear_chat_transcript()
+                self._persist_chat_sessions()
+                self._refresh_chat_history()
 
     def _filter_chat_history(self, query: str) -> None:
         needle = query.strip().casefold()
