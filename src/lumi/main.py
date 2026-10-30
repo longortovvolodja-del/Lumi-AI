@@ -795,14 +795,15 @@ class LumiWindow(QMainWindow):
         container = QFrame()
         container.setObjectName("activityBlock")
         container.setStyleSheet(
-            "QFrame#activityBlock { background: #0D1428; border: 1px solid #253454; "
-            "border-radius: 11px; }"
-            "QToolButton { background: transparent; border: none; color: #C9D5F2; "
-            "text-align: left; padding: 9px 12px; font-weight: 600; }"
+            "QFrame#activityBlock { background: #111D37; border: 1px solid #34517A; "
+            "border-radius: 12px; }"
+            "QToolButton { background: transparent; border: none; color: #DCE8FF; "
+            "text-align: left; padding: 10px 14px; font-weight: 600; }"
             "QLabel { background: transparent; color: #D9E2F8; }"
+            "QWidget#lumiResponseContent { background: transparent; }"
         )
         activity_layout = QVBoxLayout(container)
-        activity_layout.setContentsMargins(0, 0, 0, 0)
+        activity_layout.setContentsMargins(0, 0, 0, 10)
         activity_layout.setSpacing(0)
         header = QToolButton()
         header.setText("…  Люми выполняет задачу")
@@ -821,6 +822,7 @@ class LumiWindow(QMainWindow):
 
         activity_row = QHBoxLayout()
         activity_row.setContentsMargins(76, 0, 24, 0)
+        activity_row.setSpacing(0)
         activity_row.addWidget(container, 1)
         message_layout.addLayout(activity_row)
 
@@ -903,7 +905,7 @@ class LumiWindow(QMainWindow):
         if label is None:
             return
         if self._activity_message_layout is not None and self._activity_message_widget is not None:
-            label.setContentsMargins(76, 0, 24, 4)
+            label.setContentsMargins(88, 2, 36, 4)
             self._activity_message_layout.addWidget(label)
         else:
             self._append_chat_message(label)
@@ -1187,6 +1189,9 @@ class LumiWindow(QMainWindow):
         """Add a response bubble that wraps text and resizes to rendered Markdown."""
         message_text = str(text).replace("\\r\\n", "\n").replace("\\n", "\n")
         row_widget = QWidget()
+        row_widget.setObjectName("lumiResponseContent")
+        row_widget.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        row_widget.setStyleSheet("QWidget#lumiResponseContent { background: transparent; }")
         row_widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         row_layout = QVBoxLayout(row_widget)
         row_layout.setContentsMargins(0, 0, 0, 0)
@@ -1210,7 +1215,7 @@ class LumiWindow(QMainWindow):
             row_layout.addLayout(logo_row)
 
         bubble_row = QHBoxLayout()
-        bubble_row.setContentsMargins(76 if show_logo else 24, 0, 0, 0)
+        bubble_row.setContentsMargins(12, 0, 12, 0)
         bubble_row.setSpacing(0)
         bubble = MarkdownMessageBrowser()
         bubble.setObjectName("lumiMessage")
@@ -1219,7 +1224,9 @@ class LumiWindow(QMainWindow):
         row_layout.addLayout(bubble_row)
         row_widget._lumi_bubble = bubble
         if self._activity_message_layout is not None and self._activity_message_widget is not None:
-            self._activity_message_layout.addWidget(row_widget)
+            activity_layout = self._activity_container.layout() if self._activity_container is not None else None
+            if activity_layout is not None:
+                activity_layout.addWidget(row_widget)
             self._activity_message_widget._lumi_bubble = bubble
             self._activity_message_widget._lumi_response_widget = row_widget
             return self._activity_message_widget
