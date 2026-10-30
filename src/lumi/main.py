@@ -397,6 +397,8 @@ class LumiWindow(QMainWindow):
         self._activity_details_layout: QVBoxLayout | None = None
         self._activity_duration_label: QLabel | None = None
         self._pending_activity_duration: QLabel | None = None
+        self._activity_message_widget: QWidget | None = None
+        self._activity_message_layout: QVBoxLayout | None = None
         self.current_note_id: int | None = None
         self.nav_buttons: dict[str, QPushButton] = {}
         self.sidebar_collapsed = False
@@ -765,7 +767,31 @@ class LumiWindow(QMainWindow):
         return f"{minutes} мин {remaining} с"
 
     def _create_live_activity_block(self) -> QWidget:
-        """Insert one persistent activity block into the transcript as soon as work starts."""
+        """Create one assistant message shell for logo, activity log, answer and duration."""
+        wrapper = QWidget()
+        wrapper.setObjectName("lumiAssistantMessage")
+        wrapper.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        wrapper.setStyleSheet("QWidget#lumiAssistantMessage { background: transparent; }")
+        wrapper.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        message_layout = QVBoxLayout(wrapper)
+        message_layout.setContentsMargins(0, 0, 0, 4)
+        message_layout.setSpacing(4)
+
+        logo_row = QHBoxLayout()
+        logo_row.setContentsMargins(24, 0, 0, 0)
+        avatar = QLabel()
+        avatar.setFixedSize(112, 52)
+        avatar.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        avatar.setStyleSheet("background: transparent;")
+        avatar.setAutoFillBackground(False)
+        avatar.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        avatar.setPixmap(QPixmap(str(resource_path("assets/Люми — неоновый лисий логотип.png"))).scaled(
+            108, 50, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
+        ))
+        logo_row.addWidget(avatar, 0, Qt.AlignmentFlag.AlignLeft)
+        logo_row.addStretch(1)
+        message_layout.addLayout(logo_row)
+
         container = QFrame()
         container.setObjectName("activityBlock")
         container.setStyleSheet(
@@ -775,9 +801,9 @@ class LumiWindow(QMainWindow):
             "text-align: left; padding: 9px 12px; font-weight: 600; }"
             "QLabel { background: transparent; color: #D9E2F8; }"
         )
-        layout = QVBoxLayout(container)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
+        activity_layout = QVBoxLayout(container)
+        activity_layout.setContentsMargins(0, 0, 0, 0)
+        activity_layout.setSpacing(0)
         header = QToolButton()
         header.setText("…  Люми выполняет задачу")
         header.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
@@ -790,20 +816,20 @@ class LumiWindow(QMainWindow):
         details_layout.setSpacing(10)
         details.setVisible(False)
         header.toggled.connect(details.setVisible)
-        layout.addWidget(header)
-        layout.addWidget(details)
-        wrapper = QWidget()
-        wrapper.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
-        wrapper.setStyleSheet("background: transparent;")
-        wrapper.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-        wrapper_layout = QHBoxLayout(wrapper)
-        wrapper_layout.setContentsMargins(76, 0, 24, 0)
-        wrapper_layout.setSpacing(0)
-        wrapper_layout.addWidget(container, 1)
+        activity_layout.addWidget(header)
+        activity_layout.addWidget(details)
+
+        activity_row = QHBoxLayout()
+        activity_row.setContentsMargins(76, 0, 24, 0)
+        activity_row.addWidget(container, 1)
+        message_layout.addLayout(activity_row)
+
         self._activity_container = container
         self._activity_header = header
         self._activity_details = details
         self._activity_details_layout = details_layout
+        self._activity_message_widget = wrapper
+        self._activity_message_layout = message_layout
         self._refresh_live_activity_details()
         self._append_chat_message(wrapper)
         return wrapper
@@ -870,6 +896,20 @@ class LumiWindow(QMainWindow):
         self._activity_duration_label.setStyleSheet("color: #8D97B8; font-size: 9pt;")
         self._activity_duration_label.setContentsMargins(76, 0, 24, 4)
         self._pending_activity_duration = self._activity_duration_label
+
+    def _append_pending_activity_duration(self) -> None:
+        """Place elapsed-time caption inside the same assistant message shell."""
+        label = self._pending_activity_duration
+        if label is None:
+            return
+        if self._activity_message_layout is not None and self._activity_message_widget is not None:
+            label.setContentsMargins(76, 0, 24, 4)
+            self._activity_message_layout.addWidget(label)
+        else:
+            self._append_chat_message(label)
+        self._pending_activity_duration = None
+        self._activity_message_widget = None
+        self._activity_message_layout = None
 
     def _start_tool_followup(self) -> None:
         """Ask the model to continue after a tool result, without unlocking the chat."""
@@ -1109,9 +1149,7 @@ class LumiWindow(QMainWindow):
                 bubble.set_markdown(answer)
         self._streaming_widget = None
         self._streaming_text = ""
-        if self._pending_activity_duration is not None:
-            self._append_chat_message(self._pending_activity_duration)
-            self._pending_activity_duration = None
+        self._append_pending_activity_duration()
         self.chat_status.setText("●  AnyModel · Grok 4.6")
         self.chat_status.setStyleSheet("color: #7CEEFF; font-size: 9pt;")
 
@@ -1123,9 +1161,7 @@ class LumiWindow(QMainWindow):
         self._tool_round_active = False
         self._finish_live_activity(success=False)
         self._add_lumi_message(message, show_logo=True)
-        if self._pending_activity_duration is not None:
-            self._append_chat_message(self._pending_activity_duration)
-            self._pending_activity_duration = None
+        self._append_pending_activity_duration()
         self.chat_status.setText("●  Ошибка подключения")
         self.chat_status.setStyleSheet("color: #FF9C9C; font-size: 9pt;")
         if self.chat_messages and self.chat_messages[-1].get("role") == "user":
@@ -1147,7 +1183,7 @@ class LumiWindow(QMainWindow):
         row_layout.setContentsMargins(0, 0, 0, 0)
         row_layout.setSpacing(4)
 
-        if show_logo:
+        if show_logo and self._activity_message_widget is None:
             logo_row = QHBoxLayout()
             logo_row.setContentsMargins(24, 0, 0, 0)
             logo_row.setSpacing(0)
@@ -1173,6 +1209,9 @@ class LumiWindow(QMainWindow):
         bubble_row.addWidget(bubble, 1, Qt.AlignmentFlag.AlignTop)
         row_layout.addLayout(bubble_row)
         row_widget._lumi_bubble = bubble
+        if self._activity_message_layout is not None and self._activity_message_widget is not None:
+            self._activity_message_layout.addWidget(row_widget)
+            return self._activity_message_widget
         self._append_chat_message(row_widget)
         return row_widget
 
