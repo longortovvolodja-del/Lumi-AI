@@ -746,7 +746,6 @@ class LumiWindow(QMainWindow):
         self._create_live_activity_block()
         self._streaming_text = ""
         self._streaming_widget = None
-        self._add_thinking_separator()
         self.api_worker = AnyModelRequestWorker(key, model, messages)
         self.api_worker.token_received.connect(self._on_cloud_chunk)
         self.api_worker.transport_status.connect(self._on_transport_status)
@@ -957,6 +956,7 @@ class LumiWindow(QMainWindow):
         messages = [{"role": "system", "content": self._effective_system_prompt()}] + list(self.chat_messages)
         self._streaming_text = ""
         self._streaming_widget = None
+        self._add_thinking_separator()
         self.api_worker = AnyModelRequestWorker(key, model, messages)
         self.api_worker.token_received.connect(self._on_cloud_chunk)
         self.api_worker.transport_status.connect(self._on_transport_status)
