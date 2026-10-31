@@ -1351,11 +1351,14 @@ class LumiWindow(QMainWindow):
                 item = QListWidgetItem(title)
                 item.setData(Qt.ItemDataRole.UserRole, index)
                 item.setToolTip(title)
+                item.setSelected(session is self.active_chat_session)
                 self.chat_history_list.addItem(item)
         if not self.chat_sessions:
             empty = QListWidgetItem("История появится после создания чата")
             empty.setFlags(Qt.ItemFlag.NoItemFlags)
             self.chat_history_list.addItem(empty)
+        if hasattr(self, "chat_search"):
+            self._filter_chat_history(self.chat_search.text())
 
     def _open_chat_session(self, item: QListWidgetItem) -> None:
         index = item.data(Qt.ItemDataRole.UserRole)
