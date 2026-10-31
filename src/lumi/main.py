@@ -1290,12 +1290,20 @@ class LumiWindow(QMainWindow):
     def _commit_active_chat(self) -> None:
         if not self.chat_messages:
             return
+        now = time.time()
         if self.active_chat_session is None:
-            self.active_chat_session = {"title": self.active_chat_title, "messages": list(self.chat_messages)}
+            self.active_chat_session = {
+                "title": self.active_chat_title,
+                "messages": list(self.chat_messages),
+                "created_at": now,
+                "updated_at": now,
+            }
             self.chat_sessions.insert(0, self.active_chat_session)
         else:
             self.active_chat_session["title"] = self.active_chat_title
             self.active_chat_session["messages"] = list(self.chat_messages)
+            self.active_chat_session.setdefault("created_at", now)
+            self.active_chat_session["updated_at"] = now
             if self.active_chat_session in self.chat_sessions:
                 self.chat_sessions.remove(self.active_chat_session)
             self.chat_sessions.insert(0, self.active_chat_session)
@@ -1315,11 +1323,35 @@ class LumiWindow(QMainWindow):
 
     def _refresh_chat_history(self) -> None:
         self.chat_history_list.clear()
+        today = datetime.now().date()
+        groups = {"today": [], "yesterday": [], "earlier": []}
         for index, session in enumerate(self.chat_sessions):
-            item = QListWidgetItem(str(session.get("title", "Чат")))
-            item.setData(Qt.ItemDataRole.UserRole, index)
-            item.setToolTip(str(session.get("title", "Чат")))
-            self.chat_history_list.addItem(item)
+            stamp = session.get("updated_at", session.get("created_at"))
+            try:
+                session_date = datetime.fromtimestamp(float(stamp)).date()
+            except (TypeError, ValueError, OSError, OverflowError):
+                session_date = None
+            if session_date == today:
+                group = "today"
+            elif session_date is not None and (today - session_date).days == 1:
+                group = "yesterday"
+            else:
+                group = "earlier"
+            groups[group].append((index, session))
+        for key, heading in (("today", "СЕГОДНЯ"), ("yesterday", "ВЧЕРА"), ("earlier", "РАНЕЕ")):
+            entries = groups[key]
+            if not entries:
+                continue
+            label = QListWidgetItem(heading)
+            label.setFlags(Qt.ItemFlag.NoItemFlags)
+            label.setData(Qt.ItemDataRole.UserRole, None)
+            self.chat_history_list.addItem(label)
+            for index, session in entries:
+                title = str(session.get("title", "Чат"))
+                item = QListWidgetItem(title)
+                item.setData(Qt.ItemDataRole.UserRole, index)
+                item.setToolTip(title)
+                self.chat_history_list.addItem(item)
         if not self.chat_sessions:
             empty = QListWidgetItem("История появится после создания чата")
             empty.setFlags(Qt.ItemFlag.NoItemFlags)
@@ -1417,9 +1449,23 @@ class LumiWindow(QMainWindow):
 
     def _filter_chat_history(self, query: str) -> None:
         needle = query.strip().casefold()
+        pending_heading = None
+        heading_has_match = False
         for index in range(self.chat_history_list.count()):
             item = self.chat_history_list.item(index)
-            item.setHidden(bool(needle) and needle not in item.text().casefold())
+            session_index = item.data(Qt.ItemDataRole.UserRole)
+            if session_index is None:
+                if pending_heading is not None:
+                    pending_heading.setHidden(bool(needle) and not heading_has_match)
+                pending_heading = item
+                heading_has_match = False
+                item.setHidden(False)
+            else:
+                matches = not needle or needle in item.text().casefold()
+                item.setHidden(not matches)
+                heading_has_match = heading_has_match or matches
+        if pending_heading is not None:
+            pending_heading.setHidden(bool(needle) and not heading_has_match)
 
     def _build_notes_page(self) -> QWidget:
         page = QWidget()
