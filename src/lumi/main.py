@@ -4,6 +4,7 @@ from __future__ import annotations
 import subprocess
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
 
 import json
@@ -391,6 +392,7 @@ class LumiWindow(QMainWindow):
         self._tool_round_count = 0
         self._activity_events: list[dict[str, str]] = []
         self._activity_started_at = 0.0
+        self._activity_elapsed_seconds = 0.0
         self._activity_container: QFrame | None = None
         self._activity_header: QToolButton | None = None
         self._activity_details: QWidget | None = None
@@ -739,6 +741,7 @@ class LumiWindow(QMainWindow):
         self._tool_round_count = 0
         self._activity_events = [{"title": "Запрос принят", "detail": "Сообщение передано выбранной облачной модели.", "status": "ok"}]
         self._activity_started_at = time.perf_counter()
+        self._activity_elapsed_seconds = 0.0
         self._create_live_activity_block()
         self._streaming_text = ""
         self._streaming_widget = None
@@ -911,6 +914,7 @@ class LumiWindow(QMainWindow):
         if not self._activity_started_at:
             return
         elapsed = time.perf_counter() - self._activity_started_at
+        self._activity_elapsed_seconds = elapsed
         if self._activity_header is not None:
             self._activity_header.setText("✓  Действия выполнены  ▾" if success else "!  Выполнение завершено  ▾")
         self._activity_started_at = 0.0
@@ -1183,7 +1187,13 @@ class LumiWindow(QMainWindow):
             return
         self._tool_round_active = False
         self._finish_live_activity(success=True)
-        self.chat_messages.append({"role": "assistant", "content": answer})
+        self.chat_messages.append({
+            "role": "assistant",
+            "content": answer,
+            "activity_events": [dict(event) for event in self._activity_events],
+            "activity_duration": self._activity_elapsed_seconds,
+            "activity_success": True,
+        })
         self._commit_active_chat()
         if self._streaming_widget is None:
             self._add_lumi_message(answer, show_logo=True)
@@ -1329,9 +1339,49 @@ class LumiWindow(QMainWindow):
             if message.get("role") == "user":
                 self._add_user_message(str(message.get("content", "")))
             elif message.get("role") == "assistant" and message.get("content"):
-                self._add_lumi_message(str(message.get("content", "")), show_logo=True)
+                events = message.get("activity_events")
+                if isinstance(events, list) and events:
+                    self._add_saved_activity_message(
+                        str(message.get("content", "")), events,
+                        float(message.get("activity_duration", 0.0) or 0.0),
+                        success=bool(message.get("activity_success", True)),
+                    )
+                else:
+                    self._add_lumi_message(str(message.get("content", "")), show_logo=True)
         self._refresh_chat_history()
 
+    def _add_saved_activity_message(self, answer: str, events: list, duration: float, *, success: bool = True) -> None:
+        """Rebuild the expandable activity card from data stored with the assistant reply."""
+        self._activity_events = [
+            {"title": str(event.get("title", "Действие")), "detail": str(event.get("detail", "")), "status": str(event.get("status", "ok"))}
+            for event in events if isinstance(event, dict)
+        ]
+        self._activity_started_at = 0.0
+        self._activity_container = None
+        self._activity_header = None
+        self._activity_details = None
+        self._activity_details_layout = None
+        self._activity_message_widget = None
+        self._activity_message_layout = None
+        self._create_live_activity_block()
+        container = self._activity_container
+        if self._activity_header is not None:
+            self._activity_header.setText("✓  Действия выполнены  ▾" if success else "!  Выполнение завершено  ▾")
+            self._activity_header.setChecked(False)
+        self._activity_header = None
+        self._activity_details = None
+        self._activity_details_layout = None
+        self._add_lumi_message(answer, show_logo=True)
+        duration_label = QLabel(f"Completed in {self._format_elapsed(duration)}")
+        duration_label.setObjectName("muted")
+        duration_label.setStyleSheet("color: #8D97B8; font-size: 9pt;")
+        duration_label.setContentsMargins(88, 2, 36, 4)
+        if container is not None and container.layout() is not None:
+            container.layout().addWidget(duration_label)
+        self._activity_container = None
+        self._activity_message_widget = None
+        self._activity_message_layout = None
+        self._activity_events = []
     def _show_chat_context_menu(self, position) -> None:
         item = self.chat_history_list.itemAt(position)
         if item is None:
