@@ -401,6 +401,7 @@ class LumiWindow(QMainWindow):
         self._pending_activity_duration: QLabel | None = None
         self._activity_message_widget: QWidget | None = None
         self._activity_message_layout: QVBoxLayout | None = None
+        self._thinking_status_label: QLabel | None = None
         self.current_note_id: int | None = None
         self.nav_buttons: dict[str, QPushButton] = {}
         self.sidebar_collapsed = False
@@ -745,6 +746,7 @@ class LumiWindow(QMainWindow):
         self._create_live_activity_block()
         self._streaming_text = ""
         self._streaming_widget = None
+        self._add_thinking_separator()
         self.api_worker = AnyModelRequestWorker(key, model, messages)
         self.api_worker.token_received.connect(self._on_cloud_chunk)
         self.api_worker.transport_status.connect(self._on_transport_status)
@@ -946,6 +948,7 @@ class LumiWindow(QMainWindow):
         self._activity_container = None
         self._activity_message_widget = None
         self._activity_message_layout = None
+        self._thinking_status_label = None
 
     def _start_tool_followup(self) -> None:
         """Ask the model to continue after a tool result, without unlocking the chat."""
@@ -1091,6 +1094,40 @@ class LumiWindow(QMainWindow):
             return
         self._record_activity("Передача ответа", status, "running" if "SSE" in status else "error")
 
+    def _preserve_streaming_message(self, fallback_text: str = "") -> None:
+        """Keep model commentary that arrived before a tool call as a visible chat message."""
+        text = self._streaming_text or str(fallback_text or "").strip()
+        if text:
+            if self._streaming_widget is None:
+                self._add_lumi_message(text, show_logo=True)
+            else:
+                bubble = getattr(self._streaming_widget, "_lumi_bubble", None)
+                if bubble is not None:
+                    bubble.set_markdown(text)
+        self._streaming_widget = None
+        self._streaming_text = ""
+
+    def _add_thinking_separator(self) -> None:
+        """Add a visible status divider between model messages during a tool workflow."""
+        if self._activity_container is None or self._activity_container.layout() is None:
+            return
+        if self._thinking_status_label is not None:
+            self._thinking_status_label.setText("✓  Промежуточный ответ получен")
+            self._thinking_status_label.setStyleSheet("color: #78DCA8; font-size: 9pt; font-weight: 600;")
+        divider = QWidget()
+        row = QHBoxLayout(divider)
+        row.setContentsMargins(14, 8, 14, 8)
+        row.setSpacing(10)
+        label = QLabel("…  Думаю, продолжаю задачу")
+        label.setStyleSheet("color: #B8A5FF; font-size: 9pt; font-weight: 600;")
+        rule = QFrame()
+        rule.setFrameShape(QFrame.Shape.HLine)
+        rule.setStyleSheet("color: #30405F;")
+        row.addWidget(label)
+        row.addWidget(rule, 1)
+        self._activity_container.layout().addWidget(divider)
+        self._thinking_status_label = label
+
     def _clear_streaming_message(self) -> None:
         """Clear only the streamed answer bubble while preserving the activity shell."""
         widget = self._streaming_widget
@@ -1129,9 +1166,9 @@ class LumiWindow(QMainWindow):
             return
         tool_calls = message.get("tool_calls") or []
         if tool_calls:
-            # Tool-call rounds are not user-facing final answers. Remove any partial
-            # text bubble if the provider streamed commentary before the tool call.
-            self._clear_streaming_message()
+            # Text emitted before a tool call is still a real assistant message.
+            # Keep it visible instead of deleting it when the tool-call packet arrives.
+            self._preserve_streaming_message(str(message.get("content") or ""))
             self._tool_round_count += 1
             if self._tool_round_count > 6:
                 self._tool_round_active = False
@@ -1186,6 +1223,10 @@ class LumiWindow(QMainWindow):
             self._on_cloud_error("Модель вернула пустой ответ.")
             return
         self._tool_round_active = False
+        if self._thinking_status_label is not None:
+            self._thinking_status_label.setText("✓  Ответ получен")
+            self._thinking_status_label.setStyleSheet("color: #78DCA8; font-size: 9pt; font-weight: 600;")
+            self._thinking_status_label = None
         self._finish_live_activity(success=True)
         self.chat_messages.append({
             "role": "assistant",
