@@ -4,6 +4,7 @@ from __future__ import annotations
 import subprocess
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
 
 import json
@@ -13,9 +14,9 @@ import urllib.request
 from PySide6.QtCore import Qt, QSize, QThread, Signal, QSettings, QTimer
 from PySide6.QtGui import QAction, QFont, QIcon, QPixmap, QTextCursor
 from PySide6.QtWidgets import (
-    QApplication, QComboBox, QFileDialog, QFrame, QHBoxLayout, QLabel,
+    QApplication, QComboBox, QFileDialog, QFrame, QHBoxLayout, QLabel, QInputDialog, QMenu,
     QLineEdit, QListWidget, QListWidgetItem, QMainWindow, QMessageBox, QPushButton, QSizePolicy,
-    QScrollArea, QStackedWidget, QTextEdit, QVBoxLayout, QWidget, QCheckBox, QToolButton,
+    QScrollArea, QStackedWidget, QTextEdit, QTextBrowser, QVBoxLayout, QWidget, QCheckBox, QToolButton,
 )
 
 from lumi import __version__
@@ -57,7 +58,7 @@ QFrame#historyPanel { background: #080F26; border: 1px solid #1D2B4A; border-rad
 QScrollArea#chatTranscript { background: #0C1222; border: 1px solid #202B45; border-radius: 16px; }
 QWidget#chatTranscriptContent { background: transparent; }
 QFrame#composer { background: #10182B; border: 1px solid #263653; border-radius: 14px; }
-QLabel#lumiMessage { background: #121E38; border: 1px solid #254B6B; border-radius: 12px; padding: 14px; color: #EAF6FF; }
+QTextBrowser#lumiMessage { background: #121E38; border: 1px solid #254B6B; border-radius: 12px; padding: 10px; color: #EAF6FF; }
 QListWidget#chatHistoryList { background: transparent; border: none; padding: 2px; }
 QLabel#brand { color: #7CEEFF; font-size: 18pt; font-weight: 700; }
 QLabel#subtitle { color: #8D97B8; font-size: 9pt; }
@@ -177,9 +178,11 @@ NOTES_TOOL_DEFINITIONS = [
 
 
 class AnyModelRequestWorker(QThread):
-    """Perform an AnyModel chat/tool request away from the UI thread."""
+    """Stream an AnyModel chat/tool response away from the UI thread."""
     succeeded = Signal(object)
     failed = Signal(str)
+    token_received = Signal(str)
+    transport_status = Signal(str)
 
     def __init__(self, api_key: str, model_id: str, messages: list[dict], tools: list[dict] | None = None) -> None:
         super().__init__()
@@ -187,7 +190,7 @@ class AnyModelRequestWorker(QThread):
         self.tools = tools or NOTES_TOOL_DEFINITIONS
 
     def run(self) -> None:
-        payload_data = {"model": self.model_id, "messages": self.messages, "stream": False}
+        payload_data = {"model": self.model_id, "messages": self.messages, "stream": True}
         if self.tools:
             payload_data["tools"] = self.tools
             payload_data["tool_choice"] = "auto"
@@ -197,7 +200,7 @@ class AnyModelRequestWorker(QThread):
             data=payload,
             headers={
                 "Content-Type": "application/json",
-                "Accept": "application/json",
+                "Accept": "text/event-stream",
                 "Authorization": f"Bearer {self.api_key}",
                 "User-Agent": (
                     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -208,17 +211,87 @@ class AnyModelRequestWorker(QThread):
             method="POST",
         )
         try:
+            content_parts: list[str] = []
+            tool_calls: dict[int, dict] = {}
+            finish_reason = None
             with urllib.request.urlopen(request, timeout=90) as response:
-                data = json.loads(response.read().decode("utf-8"))
-            message = dict(data["choices"][0]["message"])
-            answer = message.get("content")
-            if isinstance(answer, list):
-                message["content"] = "\\n".join(
-                    str(part.get("text", "")) if isinstance(part, dict) else str(part)
-                    for part in answer
-                )
+                content_type = response.headers.get("Content-Type", "").lower()
+                if "text/event-stream" not in content_type:
+                    # Report the actual transport: a JSON response is inherently
+                    # buffered, so the UI cannot stream it even if stream=True was sent.
+                    self.transport_status.emit(
+                        f"Поток не предоставлен сервером (Content-Type: {content_type or 'не указан'}); получен обычный ответ."
+                    )
+                    data = json.loads(response.read().decode("utf-8"))
+                else:
+                    self.transport_status.emit("Потоковая передача SSE подключена.")
+                    # Some OpenAI-compatible gateways send the whole SSE body at once;
+                    # line-by-line parsing below cannot fix server-side buffering.
+                    # Keep consuming individual events as soon as the socket exposes them.
+                    pass
+                if "text/event-stream" not in content_type:
+                    message = dict(data["choices"][0]["message"])
+                    answer = message.get("content")
+                    if isinstance(answer, list):
+                        message["content"] = "\n".join(
+                            str(part.get("text", "")) if isinstance(part, dict) else str(part)
+                            for part in answer
+                        )
+                    if not message.get("tool_calls") and not str(message.get("content") or "").strip():
+                        raise ValueError("Сервис вернул пустой ответ без вызова инструмента.")
+                    self.succeeded.emit(message)
+                    return
+
+                # Read SSE one line at a time. response.read(2048) may wait for
+                # a large buffer or EOF on some gateways, making streaming appear broken.
+                stream_done = False
+                while not stream_done:
+                    raw_line = response.readline()
+                    if not raw_line:
+                        break
+                    line = raw_line.decode("utf-8", errors="replace").strip()
+                    if not line or line.startswith(":") or not line.startswith("data:"):
+                        continue
+                    data_text = line[5:].strip()
+                    if data_text == "[DONE]":
+                        stream_done = True
+                        continue
+                    try:
+                        packet = json.loads(data_text)
+                    except json.JSONDecodeError:
+                        continue
+                    choices = packet.get("choices") or []
+                    if not choices:
+                        continue
+                    choice = choices[0]
+                    delta = choice.get("delta") or {}
+                    piece = delta.get("content")
+                    if isinstance(piece, str) and piece:
+                        content_parts.append(piece)
+                        self.token_received.emit(piece)
+                    for item in delta.get("tool_calls") or []:
+                        index = int(item.get("index", 0))
+                        target = tool_calls.setdefault(index, {
+                            "id": "", "type": "function",
+                            "function": {"name": "", "arguments": ""},
+                        })
+                        if item.get("id"):
+                            target["id"] += str(item["id"])
+                        if item.get("type"):
+                            target["type"] = item["type"]
+                        function = item.get("function") or {}
+                        if function.get("name"):
+                            target["function"]["name"] += str(function["name"])
+                        if function.get("arguments"):
+                            target["function"]["arguments"] += str(function["arguments"])
+                    if choice.get("finish_reason") is not None:
+                        finish_reason = choice.get("finish_reason")
+
+            message = {"role": "assistant", "content": "".join(content_parts) or None}
+            if tool_calls:
+                message["tool_calls"] = [tool_calls[i] for i in sorted(tool_calls)]
             if not message.get("tool_calls") and not str(message.get("content") or "").strip():
-                raise ValueError("Сервис вернул пустой ответ без вызова инструмента.")
+                raise ValueError(f"Сервис вернул пустой ответ без вызова инструмента (finish_reason={finish_reason}).")
             self.succeeded.emit(message)
         except urllib.error.HTTPError as exc:
             try: detail = exc.read().decode("utf-8", errors="replace")[:500]
@@ -238,6 +311,64 @@ class AnyModelRequestWorker(QThread):
             self.failed.emit(f"Не удалось прочитать ответ AnyModel: {exc}")
         except Exception as exc:
             self.failed.emit(f"Ошибка запроса: {exc}")
+
+
+class MarkdownMessageBrowser(QTextBrowser):
+    """Markdown bubble whose height follows rendered content instead of clipping it."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setReadOnly(True)
+        self.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+            | Qt.TextInteractionFlag.LinksAccessibleByMouse
+        )
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setOpenExternalLinks(False)
+        self.setOpenLinks(False)
+        self.setFrameShape(QFrame.Shape.NoFrame)
+        self.document().setDocumentMargin(0)
+        self.setStyleSheet(
+            "QTextBrowser#lumiMessage { background: #121E38; border: 1px solid #254B6B; "
+            "border-radius: 12px; padding: 10px; color: #EAF6FF; }"
+            "QTextBrowser#lumiMessage a { color: #7CEEFF; }"
+        )
+        self.setMinimumHeight(48)
+        self.setMaximumWidth(900)
+        self.setMinimumWidth(0)
+        self.setMarkdown("")
+
+    @staticmethod
+    def _normalize_markdown(markdown: str) -> str:
+        import re
+
+        text = str(markdown).replace("\\r\\n", "\n").replace("\\n", "\n")
+        # Separate a bold section title from the numbered item that a model
+        # sometimes appends on the same line, avoiding a merged list section.
+        text = re.sub(
+            r"(?<!\n)(\*\*[^*\n]{2,60}\*\*)\s+(?=(?:[1-9]\d?\.)\s)",
+            r"\1\n\n",
+            text,
+        )
+        return text
+    def set_markdown(self, markdown: str) -> None:
+        self.setMarkdown(self._normalize_markdown(markdown))
+        self._fit_to_document()
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._fit_to_document()
+
+    def _fit_to_document(self) -> None:
+        # Reflow at the actual viewport width so long Markdown lines wrap and
+        # the widget grows vertically as tokens arrive.
+        width = max(80, self.viewport().width())
+        self.document().setTextWidth(width)
+        height = int(self.document().size().height() + 24)
+        self.setMinimumHeight(max(48, height))
+        self.setFixedHeight(max(48, height))
 
 
 class LumiWindow(QMainWindow):
@@ -261,15 +392,21 @@ class LumiWindow(QMainWindow):
         self._tool_round_count = 0
         self._activity_events: list[dict[str, str]] = []
         self._activity_started_at = 0.0
+        self._activity_elapsed_seconds = 0.0
         self._activity_container: QFrame | None = None
         self._activity_header: QToolButton | None = None
         self._activity_details: QWidget | None = None
         self._activity_details_layout: QVBoxLayout | None = None
         self._activity_duration_label: QLabel | None = None
         self._pending_activity_duration: QLabel | None = None
+        self._activity_message_widget: QWidget | None = None
+        self._activity_message_layout: QVBoxLayout | None = None
+        self._thinking_status_label: QLabel | None = None
+        self._activity_interim_messages: list[str] = []
         self.current_note_id: int | None = None
         self.nav_buttons: dict[str, QPushButton] = {}
         self.sidebar_collapsed = False
+        self.chat_history_collapsed = False
         self._build_ui()
         self._reload_notes()
         self._show_page("chat")
@@ -406,6 +543,15 @@ class LumiWindow(QMainWindow):
     def _toggle_sidebar(self) -> None:
         self._set_sidebar_collapsed(not self.sidebar_collapsed)
 
+    def _toggle_chat_history(self) -> None:
+        self.chat_history_collapsed = not self.chat_history_collapsed
+        visible = not self.chat_history_collapsed and self.pages.currentIndex() == 0
+        self.chat_history_panel.setVisible(visible)
+        self.history_toggle_button.setText("‹")
+        self.history_toggle_button.setToolTip("Свернуть список чатов")
+        self.chat_history_reopen_button.setVisible(not visible)
+        self.chat_history_reopen_button.setToolTip("Открыть историю чатов")
+
     def _expand_sidebar(self) -> None:
         if self.sidebar_collapsed:
             self._set_sidebar_collapsed(False)
@@ -414,7 +560,7 @@ class LumiWindow(QMainWindow):
         self.sidebar_collapsed = collapsed
         self.nav_panel.setFixedWidth(68 if collapsed else 248)
         if hasattr(self, "chat_history_panel"):
-            self.chat_history_panel.setVisible(collapsed and self.pages.currentIndex() == 0)
+            self.chat_history_panel.setVisible(not self.chat_history_collapsed and self.pages.currentIndex() == 0)
         nav_layout = self.nav_panel.layout()
         nav_layout.setContentsMargins(7 if collapsed else 14, 14 if collapsed else 20, 7 if collapsed else 14, 12 if collapsed else 16)
         nav_layout.setSpacing(7)
@@ -448,17 +594,24 @@ class LumiWindow(QMainWindow):
 
         self.chat_history_panel = QFrame()
         self.chat_history_panel.setObjectName("historyPanel")
-        self.chat_history_panel.setFixedWidth(238)
+        self.chat_history_panel.setFixedWidth(300)
         history_layout = QVBoxLayout(self.chat_history_panel)
         history_layout.setContentsMargins(12, 14, 12, 12)
         history_layout.setSpacing(12)
+        history_heading = QHBoxLayout()
         history_title = QLabel("Твои чаты")
         history_title.setObjectName("section")
-        history_layout.addWidget(history_title)
+        history_heading.addWidget(history_title, 1)
+        self.history_toggle_button = QPushButton("‹")
+        self.history_toggle_button.setObjectName("navToggle")
+        self.history_toggle_button.setToolTip("Свернуть список чатов")
+        self.history_toggle_button.clicked.connect(self._toggle_chat_history)
+        history_heading.addWidget(self.history_toggle_button)
+        history_layout.addLayout(history_heading)
 
         self.new_chat_button = QPushButton("＋  Новый чат")
         self.new_chat_button.setObjectName("primaryButton")
-        self.new_chat_button.setToolTip("Начать новый чат (пока демонстрационный режим)")
+        self.new_chat_button.setToolTip("Начать новый чат")
         self.new_chat_button.clicked.connect(self._new_chat_visual)
         history_layout.addWidget(self.new_chat_button)
 
@@ -470,9 +623,11 @@ class LumiWindow(QMainWindow):
         self.chat_history_list = QListWidget()
         self.chat_history_list.setObjectName("chatHistoryList")
         self.chat_history_list.itemDoubleClicked.connect(self._open_chat_session)
+        self.chat_history_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.chat_history_list.customContextMenuRequested.connect(self._show_chat_context_menu)
         self._refresh_chat_history()
         history_layout.addWidget(self.chat_history_list, 1)
-        history_hint = QLabel("Сохранение истории будет добавлено отдельно.")
+        history_hint = QLabel("История чатов хранится локально на этом компьютере.")
         history_hint.setObjectName("muted")
         history_hint.setWordWrap(True)
         history_layout.addWidget(history_hint)
@@ -483,6 +638,12 @@ class LumiWindow(QMainWindow):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(16)
         heading = QHBoxLayout()
+        self.chat_history_reopen_button = QPushButton("☷")
+        self.chat_history_reopen_button.setObjectName("navToggle")
+        self.chat_history_reopen_button.setFixedSize(38, 38)
+        self.chat_history_reopen_button.setToolTip("Свернуть список чатов" if not self.chat_history_collapsed else "Открыть историю чатов")
+        self.chat_history_reopen_button.clicked.connect(self._toggle_chat_history)
+        heading.addWidget(self.chat_history_reopen_button, 0, Qt.AlignmentFlag.AlignTop)
         heading_text = QVBoxLayout()
         title = QLabel("Чат с Lumi")
         title.setObjectName("pageTitle")
@@ -540,7 +701,8 @@ class LumiWindow(QMainWindow):
         footnote.setObjectName("muted")
         layout.addWidget(footnote)
         outer.addWidget(chat_area, 1)
-        self.chat_history_panel.setVisible(self.sidebar_collapsed)
+        self.chat_history_panel.setVisible(not self.chat_history_collapsed)
+        self.chat_history_reopen_button.setVisible(self.chat_history_collapsed)
         return page
 
     def _send_chat_message(self) -> None:
@@ -580,9 +742,15 @@ class LumiWindow(QMainWindow):
         self._tool_round_active = True
         self._tool_round_count = 0
         self._activity_events = [{"title": "Запрос принят", "detail": "Сообщение передано выбранной облачной модели.", "status": "ok"}]
+        self._activity_interim_messages = []
         self._activity_started_at = time.perf_counter()
+        self._activity_elapsed_seconds = 0.0
         self._create_live_activity_block()
+        self._streaming_text = ""
+        self._streaming_widget = None
         self.api_worker = AnyModelRequestWorker(key, model, messages)
+        self.api_worker.token_received.connect(self._on_cloud_chunk)
+        self.api_worker.transport_status.connect(self._on_transport_status)
         self.api_worker.succeeded.connect(self._on_cloud_response)
         self.api_worker.failed.connect(self._on_cloud_error)
         self.api_worker.finished.connect(self._on_cloud_request_finished)
@@ -631,19 +799,44 @@ class LumiWindow(QMainWindow):
         return f"{minutes} мин {remaining} с"
 
     def _create_live_activity_block(self) -> QWidget:
-        """Insert one persistent activity block into the transcript as soon as work starts."""
+        """Create one assistant message shell for logo, activity log, answer and duration."""
+        wrapper = QWidget()
+        wrapper.setObjectName("lumiAssistantMessage")
+        wrapper.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        wrapper.setStyleSheet("QWidget#lumiAssistantMessage { background: transparent; }")
+        wrapper.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        message_layout = QVBoxLayout(wrapper)
+        message_layout.setContentsMargins(0, 0, 0, 4)
+        message_layout.setSpacing(4)
+
+        logo_row = QHBoxLayout()
+        logo_row.setContentsMargins(24, 0, 0, 0)
+        avatar = QLabel()
+        avatar.setFixedSize(112, 52)
+        avatar.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        avatar.setStyleSheet("background: transparent;")
+        avatar.setAutoFillBackground(False)
+        avatar.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        avatar.setPixmap(QPixmap(str(resource_path("assets/Люми — неоновый лисий логотип.png"))).scaled(
+            108, 50, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
+        ))
+        logo_row.addWidget(avatar, 0, Qt.AlignmentFlag.AlignLeft)
+        logo_row.addStretch(1)
+        message_layout.addLayout(logo_row)
+
         container = QFrame()
         container.setObjectName("activityBlock")
         container.setStyleSheet(
-            "QFrame#activityBlock { background: #0D1428; border: 1px solid #253454; "
-            "border-radius: 11px; }"
-            "QToolButton { background: transparent; border: none; color: #C9D5F2; "
-            "text-align: left; padding: 9px 12px; font-weight: 600; }"
+            "QFrame#activityBlock { background: #111D37; border: 1px solid #34517A; "
+            "border-radius: 12px; }"
+            "QToolButton { background: transparent; border: none; color: #DCE8FF; "
+            "text-align: left; padding: 10px 14px; font-weight: 600; }"
             "QLabel { background: transparent; color: #D9E2F8; }"
+            "QWidget#lumiResponseContent { background: transparent; }"
         )
-        layout = QVBoxLayout(container)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
+        activity_layout = QVBoxLayout(container)
+        activity_layout.setContentsMargins(0, 0, 0, 10)
+        activity_layout.setSpacing(0)
         header = QToolButton()
         header.setText("…  Люми выполняет задачу")
         header.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
@@ -656,16 +849,21 @@ class LumiWindow(QMainWindow):
         details_layout.setSpacing(10)
         details.setVisible(False)
         header.toggled.connect(details.setVisible)
-        layout.addWidget(header)
-        layout.addWidget(details)
-        wrapper = QWidget()
-        wrapper_layout = QHBoxLayout(wrapper)
-        wrapper_layout.setContentsMargins(76, 0, 24, 0)
-        wrapper_layout.addWidget(container, 1)
+        activity_layout.addWidget(header)
+        activity_layout.addWidget(details)
+
+        activity_row = QHBoxLayout()
+        activity_row.setContentsMargins(76, 0, 24, 0)
+        activity_row.setSpacing(0)
+        activity_row.addWidget(container, 1)
+        message_layout.addLayout(activity_row)
+
         self._activity_container = container
         self._activity_header = header
         self._activity_details = details
         self._activity_details_layout = details_layout
+        self._activity_message_widget = wrapper
+        self._activity_message_layout = message_layout
         self._refresh_live_activity_details()
         self._append_chat_message(wrapper)
         return wrapper
@@ -719,11 +917,11 @@ class LumiWindow(QMainWindow):
         if not self._activity_started_at:
             return
         elapsed = time.perf_counter() - self._activity_started_at
+        self._activity_elapsed_seconds = elapsed
         if self._activity_header is not None:
             self._activity_header.setText("✓  Действия выполнены  ▾" if success else "!  Выполнение завершено  ▾")
         self._activity_started_at = 0.0
         # Keep the log available for inspection, but do not repeat the duration in its header.
-        self._activity_container = None
         self._activity_header = None
         self._activity_details = None
         self._activity_details_layout = None
@@ -733,12 +931,37 @@ class LumiWindow(QMainWindow):
         self._activity_duration_label.setContentsMargins(76, 0, 24, 4)
         self._pending_activity_duration = self._activity_duration_label
 
+    def _append_pending_activity_duration(self) -> None:
+        """Place elapsed-time caption inside the same assistant message shell."""
+        label = self._pending_activity_duration
+        if label is None:
+            return
+        if self._activity_message_layout is not None and self._activity_message_widget is not None:
+            label.setContentsMargins(88, 2, 36, 4)
+            activity_layout = self._activity_container.layout() if self._activity_container is not None else None
+            if activity_layout is not None:
+                activity_layout.addWidget(label)
+            else:
+                self._activity_message_layout.addWidget(label)
+        else:
+            self._append_chat_message(label)
+        self._pending_activity_duration = None
+        self._activity_container = None
+        self._activity_message_widget = None
+        self._activity_message_layout = None
+        self._thinking_status_label = None
+
     def _start_tool_followup(self) -> None:
         """Ask the model to continue after a tool result, without unlocking the chat."""
         key = str(self.settings.value("anymodel/api_key", "")).strip()
         model = str(self.settings.value("anymodel/model", "xai/grok-4.6"))
         messages = [{"role": "system", "content": self._effective_system_prompt()}] + list(self.chat_messages)
+        self._streaming_text = ""
+        self._streaming_widget = None
+        self._add_thinking_separator()
         self.api_worker = AnyModelRequestWorker(key, model, messages)
+        self.api_worker.token_received.connect(self._on_cloud_chunk)
+        self.api_worker.transport_status.connect(self._on_transport_status)
         self.api_worker.succeeded.connect(self._on_cloud_response)
         self.api_worker.failed.connect(self._on_cloud_error)
         self.api_worker.finished.connect(self._on_cloud_request_finished)
@@ -867,26 +1090,102 @@ class LumiWindow(QMainWindow):
         except Exception as exc:
             return {"ok": False, "error": f"Не удалось выполнить инструмент: {exc}"}
 
+    def _on_transport_status(self, status: str) -> None:
+        """Show whether AnyModel actually returned an SSE stream or a buffered JSON response."""
+        if not status:
+            return
+        self._record_activity("Передача ответа", status, "running" if "SSE" in status else "error")
+
+    def _preserve_streaming_message(self, fallback_text: str = "") -> None:
+        """Keep model commentary that arrived before a tool call as a visible chat message."""
+        text = self._streaming_text or str(fallback_text or "").strip()
+        if text:
+            if self._streaming_widget is None:
+                self._add_lumi_message(text, show_logo=True)
+            else:
+                bubble = getattr(self._streaming_widget, "_lumi_bubble", None)
+                if bubble is not None:
+                    bubble.set_markdown(text)
+        self._streaming_widget = None
+        self._streaming_text = ""
+
+    def _add_thinking_separator(self) -> None:
+        """Add a visible status divider between model messages during a tool workflow."""
+        if self._activity_container is None or self._activity_container.layout() is None:
+            return
+        if self._thinking_status_label is not None:
+            self._thinking_status_label.setText("✓  Промежуточный ответ получен")
+            self._thinking_status_label.setStyleSheet("color: #78DCA8; font-size: 9pt; font-weight: 600;")
+        divider = QWidget()
+        row = QHBoxLayout(divider)
+        row.setContentsMargins(14, 8, 14, 8)
+        row.setSpacing(10)
+        label = QLabel("…  Думаю, продолжаю задачу")
+        label.setStyleSheet("color: #B8A5FF; font-size: 9pt; font-weight: 600;")
+        rule = QFrame()
+        rule.setFrameShape(QFrame.Shape.HLine)
+        rule.setStyleSheet("color: #30405F;")
+        row.addWidget(label)
+        row.addWidget(rule, 1)
+        self._activity_container.layout().addWidget(divider)
+        self._thinking_status_label = label
+
+    def _clear_streaming_message(self) -> None:
+        """Clear only the streamed answer bubble while preserving the activity shell."""
+        widget = self._streaming_widget
+        if widget is None:
+            return
+        if widget is self._activity_message_widget:
+            response_widget = getattr(widget, "_lumi_response_widget", None)
+            if response_widget is not None:
+                response_widget.setParent(None)
+                response_widget.deleteLater()
+            widget._lumi_bubble = None
+            widget._lumi_response_widget = None
+        else:
+            widget.deleteLater()
+        self._streaming_widget = None
+        self._streaming_text = ""
+
+    def _on_cloud_chunk(self, chunk: str) -> None:
+        """Render streamed text in the existing Lumi bubble as soon as tokens arrive."""
+        if not chunk:
+            return
+        self._streaming_text = getattr(self, "_streaming_text", "") + chunk
+        if self._streaming_widget is None:
+            self._streaming_widget = self._add_lumi_message("", show_logo=True)
+        bubble = getattr(self._streaming_widget, "_lumi_bubble", None)
+        if bubble is not None:
+            bubble.set_markdown(self._streaming_text)
+            # Keep the latest token visible without forcing users back down if they scrolled up.
+            bar = self.chat_transcript.verticalScrollBar()
+            if bar.maximum() - bar.value() <= 80:
+                QTimer.singleShot(0, lambda: bar.setValue(bar.maximum()))
+
     def _on_cloud_response(self, message: object) -> None:
         if not isinstance(message, dict):
             self._on_cloud_error("Не удалось прочитать ответ модели: неожиданный формат.")
             return
         tool_calls = message.get("tool_calls") or []
         if tool_calls:
+            # Text emitted before a tool call is still a real assistant message.
+            # Keep it visible instead of deleting it when the tool-call packet arrives.
+            self._preserve_streaming_message(str(message.get("content") or ""))
             self._tool_round_count += 1
             if self._tool_round_count > 6:
                 self._tool_round_active = False
                 self._finish_live_activity(success=False)
                 self._add_lumi_message("Я остановила цепочку действий: достигнут безопасный лимит вызовов инструментов. Попробуй уточнить задачу.", show_logo=True)
-                if self._pending_activity_duration is not None:
-                    self._append_chat_message(self._pending_activity_duration)
-                    self._pending_activity_duration = None
+                self._append_pending_activity_duration()
                 self.chat_status.setText("●  Остановлено")
                 self._commit_active_chat()
                 return
+            assistant_content = str(message.get("content") or self._streaming_text or "").strip()
+            if assistant_content:
+                self._activity_interim_messages.append(assistant_content)
             assistant_message = {
                 "role": "assistant",
-                "content": message.get("content"),
+                "content": assistant_content,
                 "tool_calls": tool_calls,
             }
             self.chat_messages.append(assistant_message)
@@ -929,23 +1228,38 @@ class LumiWindow(QMainWindow):
             self._on_cloud_error("Модель вернула пустой ответ.")
             return
         self._tool_round_active = False
+        if self._thinking_status_label is not None:
+            self._thinking_status_label.setText("✓  Ответ получен")
+            self._thinking_status_label.setStyleSheet("color: #78DCA8; font-size: 9pt; font-weight: 600;")
+            self._thinking_status_label = None
         self._finish_live_activity(success=True)
-        self.chat_messages.append({"role": "assistant", "content": answer})
+        self.chat_messages.append({
+            "role": "assistant",
+            "content": answer,
+            "activity_events": [dict(event) for event in self._activity_events],
+            "activity_interim_messages": list(self._activity_interim_messages),
+            "activity_duration": self._activity_elapsed_seconds,
+            "activity_success": True,
+        })
         self._commit_active_chat()
-        self._add_lumi_message(answer, show_logo=True)
-        if self._pending_activity_duration is not None:
-            self._append_chat_message(self._pending_activity_duration)
-            self._pending_activity_duration = None
+        if self._streaming_widget is None:
+            self._add_lumi_message(answer, show_logo=True)
+        else:
+            bubble = getattr(self._streaming_widget, "_lumi_bubble", None)
+            if bubble is not None:
+                bubble.set_markdown(answer)
+        self._streaming_widget = None
+        self._streaming_text = ""
+        self._append_pending_activity_duration()
         self.chat_status.setText("●  AnyModel · Grok 4.6")
         self.chat_status.setStyleSheet("color: #7CEEFF; font-size: 9pt;")
 
     def _on_cloud_error(self, message: str) -> None:
+        self._clear_streaming_message()
         self._tool_round_active = False
         self._finish_live_activity(success=False)
         self._add_lumi_message(message, show_logo=True)
-        if self._pending_activity_duration is not None:
-            self._append_chat_message(self._pending_activity_duration)
-            self._pending_activity_duration = None
+        self._append_pending_activity_duration()
         self.chat_status.setText("●  Ошибка подключения")
         self.chat_status.setStyleSheet("color: #FF9C9C; font-size: 9pt;")
         if self.chat_messages and self.chat_messages[-1].get("role") == "user":
@@ -959,47 +1273,50 @@ class LumiWindow(QMainWindow):
             self.chat_input.setFocus()
 
     def _add_lumi_message(self, text: str, *, show_logo: bool = True) -> QWidget:
-        """Add a Lumi response bubble; safe to call with plain text returned by the internal AI API.
-
-        QLabel wraps long lines to the available width. Real newline characters from the
-        API are preserved. Normalize literal backslash-n sequences too, for older/mock
-        responses that may contain escaped newlines.
-        """
+        """Add a response bubble that wraps text and resizes to rendered Markdown."""
         message_text = str(text).replace("\\r\\n", "\n").replace("\\n", "\n")
         row_widget = QWidget()
+        row_widget.setObjectName("lumiResponseContent")
+        row_widget.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        row_widget.setStyleSheet("QWidget#lumiResponseContent { background: transparent; }")
+        row_widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         row_layout = QVBoxLayout(row_widget)
         row_layout.setContentsMargins(0, 0, 0, 0)
-        row_layout.setSpacing(8)
+        row_layout.setSpacing(4)
 
-        if show_logo:
+        if show_logo and self._activity_message_widget is None:
             logo_row = QHBoxLayout()
             logo_row.setContentsMargins(24, 0, 0, 0)
+            logo_row.setSpacing(0)
             avatar = QLabel()
-            avatar.setFixedSize(126, 62)
+            avatar.setFixedSize(112, 52)
             avatar.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
             avatar.setStyleSheet("background: transparent;")
             avatar.setAutoFillBackground(False)
             avatar.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
             avatar.setPixmap(QPixmap(str(resource_path("assets/Люми — неоновый лисий логотип.png"))).scaled(
-                122, 60, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
+                108, 50, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
             ))
             logo_row.addWidget(avatar, 0, Qt.AlignmentFlag.AlignLeft)
             logo_row.addStretch(1)
             row_layout.addLayout(logo_row)
 
         bubble_row = QHBoxLayout()
-        bubble_row.setContentsMargins(76 if show_logo else 24, 0, 0, 0)
-        bubble = QLabel(message_text)
+        bubble_row.setContentsMargins(12, 0, 12, 0)
+        bubble_row.setSpacing(0)
+        bubble = MarkdownMessageBrowser()
         bubble.setObjectName("lumiMessage")
-        bubble.setWordWrap(True)
-        bubble.setTextFormat(Qt.TextFormat.PlainText)
-        bubble.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-        bubble.setMaximumWidth(900)
-        bubble.setMinimumWidth(0)
-        bubble.setMinimumHeight(48)
-        bubble.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-        bubble_row.addWidget(bubble, 1)
+        bubble.set_markdown(message_text)
+        bubble_row.addWidget(bubble, 1, Qt.AlignmentFlag.AlignTop)
         row_layout.addLayout(bubble_row)
+        row_widget._lumi_bubble = bubble
+        if self._activity_message_layout is not None and self._activity_message_widget is not None:
+            activity_layout = self._activity_container.layout() if self._activity_container is not None else None
+            if activity_layout is not None:
+                activity_layout.addWidget(row_widget)
+            self._activity_message_widget._lumi_bubble = bubble
+            self._activity_message_widget._lumi_response_widget = row_widget
+            return self._activity_message_widget
         self._append_chat_message(row_widget)
         return row_widget
 
@@ -1020,12 +1337,20 @@ class LumiWindow(QMainWindow):
     def _commit_active_chat(self) -> None:
         if not self.chat_messages:
             return
+        now = time.time()
         if self.active_chat_session is None:
-            self.active_chat_session = {"title": self.active_chat_title, "messages": list(self.chat_messages)}
+            self.active_chat_session = {
+                "title": self.active_chat_title,
+                "messages": list(self.chat_messages),
+                "created_at": now,
+                "updated_at": now,
+            }
             self.chat_sessions.insert(0, self.active_chat_session)
         else:
             self.active_chat_session["title"] = self.active_chat_title
             self.active_chat_session["messages"] = list(self.chat_messages)
+            self.active_chat_session.setdefault("created_at", now)
+            self.active_chat_session["updated_at"] = now
             if self.active_chat_session in self.chat_sessions:
                 self.chat_sessions.remove(self.active_chat_session)
             self.chat_sessions.insert(0, self.active_chat_session)
@@ -1045,16 +1370,46 @@ class LumiWindow(QMainWindow):
 
     def _refresh_chat_history(self) -> None:
         self.chat_history_list.clear()
-        for session in self.chat_sessions:
-            self.chat_history_list.addItem(str(session.get("title", "Чат")))
+        today = datetime.now().date()
+        groups = {"today": [], "yesterday": [], "earlier": []}
+        for index, session in enumerate(self.chat_sessions):
+            stamp = session.get("updated_at", session.get("created_at"))
+            try:
+                session_date = datetime.fromtimestamp(float(stamp)).date()
+            except (TypeError, ValueError, OSError, OverflowError):
+                session_date = None
+            if session_date == today:
+                group = "today"
+            elif session_date is not None and (today - session_date).days == 1:
+                group = "yesterday"
+            else:
+                group = "earlier"
+            groups[group].append((index, session))
+        for key, heading in (("today", "СЕГОДНЯ"), ("yesterday", "ВЧЕРА"), ("earlier", "РАНЕЕ")):
+            entries = groups[key]
+            if not entries:
+                continue
+            label = QListWidgetItem(heading)
+            label.setFlags(Qt.ItemFlag.NoItemFlags)
+            label.setData(Qt.ItemDataRole.UserRole, None)
+            self.chat_history_list.addItem(label)
+            for index, session in entries:
+                title = str(session.get("title", "Чат"))
+                item = QListWidgetItem(title)
+                item.setData(Qt.ItemDataRole.UserRole, index)
+                item.setToolTip(title)
+                item.setSelected(session is self.active_chat_session)
+                self.chat_history_list.addItem(item)
         if not self.chat_sessions:
             empty = QListWidgetItem("История появится после создания чата")
             empty.setFlags(Qt.ItemFlag.NoItemFlags)
             self.chat_history_list.addItem(empty)
+        if hasattr(self, "chat_search"):
+            self._filter_chat_history(self.chat_search.text())
 
     def _open_chat_session(self, item: QListWidgetItem) -> None:
-        index = self.chat_history_list.row(item)
-        if index < 0 or index >= len(self.chat_sessions):
+        index = item.data(Qt.ItemDataRole.UserRole)
+        if not isinstance(index, int) or index < 0 or index >= len(self.chat_sessions):
             return
         target = self.chat_sessions[index]
         self._commit_active_chat()
@@ -1062,18 +1417,133 @@ class LumiWindow(QMainWindow):
         self.chat_messages = [dict(message) for message in target.get("messages", [])]
         self.active_chat_title = str(target.get("title", "Чат"))
         self._clear_chat_transcript()
+        pending_interim_messages = []
         for message in self.chat_messages:
-            if message.get("role") == "user":
+            role = message.get("role")
+            if role == "user":
                 self._add_user_message(str(message.get("content", "")))
-            elif message.get("role") == "assistant" and message.get("content"):
-                self._add_lumi_message(str(message.get("content", "")), show_logo=True)
+            elif role == "assistant" and message.get("tool_calls"):
+                interim = str(message.get("content") or "").strip()
+                if interim:
+                    pending_interim_messages.append(interim)
+            elif role == "assistant" and message.get("content"):
+                events = message.get("activity_events")
+                if isinstance(events, list) and events:
+                    saved_interim = message.get("activity_interim_messages")
+                    if isinstance(saved_interim, list):
+                        pending_interim_messages = [str(value) for value in saved_interim if str(value).strip()]
+                    self._add_saved_activity_message(
+                        str(message.get("content", "")), events,
+                        float(message.get("activity_duration", 0.0) or 0.0),
+                        success=bool(message.get("activity_success", True)),
+                        interim_messages=pending_interim_messages,
+                    )
+                    pending_interim_messages = []
+                else:
+                    self._add_lumi_message(str(message.get("content", "")), show_logo=True)
+            # Tool protocol messages are intentionally not rendered as separate chat bubbles.
         self._refresh_chat_history()
+
+    def _add_saved_activity_message(self, answer: str, events: list, duration: float, *, success: bool = True, interim_messages: list[str] | None = None) -> None:
+        """Rebuild the expandable activity card from data stored with the assistant reply."""
+        self._activity_events = [
+            {"title": str(event.get("title", "Действие")), "detail": str(event.get("detail", "")), "status": str(event.get("status", "ok"))}
+            for event in events if isinstance(event, dict)
+        ]
+        self._activity_started_at = 0.0
+        self._activity_container = None
+        self._activity_header = None
+        self._activity_details = None
+        self._activity_details_layout = None
+        self._activity_message_widget = None
+        self._activity_message_layout = None
+        self._create_live_activity_block()
+        container = self._activity_container
+        if self._activity_header is not None:
+            self._activity_header.setText("✓  Действия выполнены  ▾" if success else "!  Выполнение завершено  ▾")
+            self._activity_header.setChecked(False)
+        self._activity_header = None
+        self._activity_details = None
+        self._activity_details_layout = None
+        for interim in interim_messages or []:
+            self._add_lumi_message(interim, show_logo=False)
+        if interim_messages:
+            divider = QWidget()
+            divider_row = QHBoxLayout(divider)
+            divider_row.setContentsMargins(14, 8, 14, 8)
+            divider_row.setSpacing(10)
+            status = QLabel("✓  Ответ получен")
+            status.setStyleSheet("color: #78DCA8; font-size: 9pt; font-weight: 600;")
+            rule = QFrame()
+            rule.setFrameShape(QFrame.Shape.HLine)
+            rule.setStyleSheet("color: #30405F;")
+            divider_row.addWidget(status)
+            divider_row.addWidget(rule, 1)
+            if container is not None and container.layout() is not None:
+                container.layout().addWidget(divider)
+        self._add_lumi_message(answer, show_logo=False)
+        duration_label = QLabel(f"Completed in {self._format_elapsed(duration)}")
+        duration_label.setObjectName("muted")
+        duration_label.setStyleSheet("color: #8D97B8; font-size: 9pt;")
+        duration_label.setContentsMargins(88, 2, 36, 4)
+        if container is not None and container.layout() is not None:
+            container.layout().addWidget(duration_label)
+        self._activity_container = None
+        self._activity_message_widget = None
+        self._activity_message_layout = None
+        self._activity_events = []
+    def _show_chat_context_menu(self, position) -> None:
+        item = self.chat_history_list.itemAt(position)
+        if item is None:
+            return
+        index = item.data(Qt.ItemDataRole.UserRole)
+        if not isinstance(index, int) or index < 0 or index >= len(self.chat_sessions):
+            return
+        menu = QMenu(self)
+        rename_action = menu.addAction("Переименовать")
+        delete_action = menu.addAction("Удалить чат")
+        chosen = menu.exec(self.chat_history_list.mapToGlobal(position))
+        if chosen == rename_action:
+            current = str(self.chat_sessions[index].get("title", "Чат"))
+            title, accepted = QInputDialog.getText(self, "Переименовать чат", "Название:", text=current)
+            title = title.strip()
+            if accepted and title:
+                self.chat_sessions[index]["title"] = title[:80]
+                if self.active_chat_session is self.chat_sessions[index]:
+                    self.active_chat_title = title[:80]
+                self._persist_chat_sessions()
+                self._refresh_chat_history()
+        elif chosen == delete_action:
+            answer = QMessageBox.question(self, "Удалить чат", f"Удалить чат «{self.chat_sessions[index].get('title', 'Чат')}»?", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No)
+            if answer == QMessageBox.StandardButton.Yes:
+                target = self.chat_sessions.pop(index)
+                if self.active_chat_session is target:
+                    self.active_chat_session = None
+                    self.active_chat_title = "Новый чат"
+                    self.chat_messages = []
+                    self._clear_chat_transcript()
+                self._persist_chat_sessions()
+                self._refresh_chat_history()
 
     def _filter_chat_history(self, query: str) -> None:
         needle = query.strip().casefold()
+        pending_heading = None
+        heading_has_match = False
         for index in range(self.chat_history_list.count()):
             item = self.chat_history_list.item(index)
-            item.setHidden(bool(needle) and needle not in item.text().casefold())
+            session_index = item.data(Qt.ItemDataRole.UserRole)
+            if session_index is None:
+                if pending_heading is not None:
+                    pending_heading.setHidden(bool(needle) and not heading_has_match)
+                pending_heading = item
+                heading_has_match = False
+                item.setHidden(False)
+            else:
+                matches = not needle or needle in item.text().casefold()
+                item.setHidden(not matches)
+                heading_has_match = heading_has_match or matches
+        if pending_heading is not None:
+            pending_heading.setHidden(bool(needle) and not heading_has_match)
 
     def _build_notes_page(self) -> QWidget:
         page = QWidget()
@@ -1467,7 +1937,9 @@ class LumiWindow(QMainWindow):
         if key == "models" and hasattr(self, "models_overview_card"):
             self._show_local_model_overview()
         if hasattr(self, "chat_history_panel"):
-            self.chat_history_panel.setVisible(self.sidebar_collapsed and key == "chat")
+            visible = not self.chat_history_collapsed and key == "chat"
+            self.chat_history_panel.setVisible(visible)
+            self.chat_history_reopen_button.setVisible(self.chat_history_collapsed and key == "chat")
         for name, button in self.nav_buttons.items():
             button.setChecked(name == key)
 
