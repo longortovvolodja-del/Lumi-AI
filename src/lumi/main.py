@@ -402,6 +402,7 @@ class LumiWindow(QMainWindow):
         self._activity_message_widget: QWidget | None = None
         self._activity_message_layout: QVBoxLayout | None = None
         self._thinking_status_label: QLabel | None = None
+        self._activity_interim_messages: list[str] = []
         self.current_note_id: int | None = None
         self.nav_buttons: dict[str, QPushButton] = {}
         self.sidebar_collapsed = False
@@ -741,6 +742,7 @@ class LumiWindow(QMainWindow):
         self._tool_round_active = True
         self._tool_round_count = 0
         self._activity_events = [{"title": "Запрос принят", "detail": "Сообщение передано выбранной облачной модели.", "status": "ok"}]
+        self._activity_interim_messages = []
         self._activity_started_at = time.perf_counter()
         self._activity_elapsed_seconds = 0.0
         self._create_live_activity_block()
@@ -1178,9 +1180,12 @@ class LumiWindow(QMainWindow):
                 self.chat_status.setText("●  Остановлено")
                 self._commit_active_chat()
                 return
+            assistant_content = str(message.get("content") or self._streaming_text or "").strip()
+            if assistant_content:
+                self._activity_interim_messages.append(assistant_content)
             assistant_message = {
                 "role": "assistant",
-                "content": message.get("content"),
+                "content": assistant_content,
                 "tool_calls": tool_calls,
             }
             self.chat_messages.append(assistant_message)
@@ -1232,6 +1237,7 @@ class LumiWindow(QMainWindow):
             "role": "assistant",
             "content": answer,
             "activity_events": [dict(event) for event in self._activity_events],
+            "activity_interim_messages": list(self._activity_interim_messages),
             "activity_duration": self._activity_elapsed_seconds,
             "activity_success": True,
         })
@@ -1411,22 +1417,34 @@ class LumiWindow(QMainWindow):
         self.chat_messages = [dict(message) for message in target.get("messages", [])]
         self.active_chat_title = str(target.get("title", "Чат"))
         self._clear_chat_transcript()
+        pending_interim_messages = []
         for message in self.chat_messages:
-            if message.get("role") == "user":
+            role = message.get("role")
+            if role == "user":
                 self._add_user_message(str(message.get("content", "")))
-            elif message.get("role") == "assistant" and message.get("content"):
+            elif role == "assistant" and message.get("tool_calls"):
+                interim = str(message.get("content") or "").strip()
+                if interim:
+                    pending_interim_messages.append(interim)
+            elif role == "assistant" and message.get("content"):
                 events = message.get("activity_events")
                 if isinstance(events, list) and events:
+                    saved_interim = message.get("activity_interim_messages")
+                    if isinstance(saved_interim, list):
+                        pending_interim_messages = [str(value) for value in saved_interim if str(value).strip()]
                     self._add_saved_activity_message(
                         str(message.get("content", "")), events,
                         float(message.get("activity_duration", 0.0) or 0.0),
                         success=bool(message.get("activity_success", True)),
+                        interim_messages=pending_interim_messages,
                     )
+                    pending_interim_messages = []
                 else:
                     self._add_lumi_message(str(message.get("content", "")), show_logo=True)
+            # Tool protocol messages are intentionally not rendered as separate chat bubbles.
         self._refresh_chat_history()
 
-    def _add_saved_activity_message(self, answer: str, events: list, duration: float, *, success: bool = True) -> None:
+    def _add_saved_activity_message(self, answer: str, events: list, duration: float, *, success: bool = True, interim_messages: list[str] | None = None) -> None:
         """Rebuild the expandable activity card from data stored with the assistant reply."""
         self._activity_events = [
             {"title": str(event.get("title", "Действие")), "detail": str(event.get("detail", "")), "status": str(event.get("status", "ok"))}
@@ -1447,7 +1465,23 @@ class LumiWindow(QMainWindow):
         self._activity_header = None
         self._activity_details = None
         self._activity_details_layout = None
-        self._add_lumi_message(answer, show_logo=True)
+        for interim in interim_messages or []:
+            self._add_lumi_message(interim, show_logo=False)
+        if interim_messages:
+            divider = QWidget()
+            divider_row = QHBoxLayout(divider)
+            divider_row.setContentsMargins(14, 8, 14, 8)
+            divider_row.setSpacing(10)
+            status = QLabel("✓  Ответ получен")
+            status.setStyleSheet("color: #78DCA8; font-size: 9pt; font-weight: 600;")
+            rule = QFrame()
+            rule.setFrameShape(QFrame.Shape.HLine)
+            rule.setStyleSheet("color: #30405F;")
+            divider_row.addWidget(status)
+            divider_row.addWidget(rule, 1)
+            if container is not None and container.layout() is not None:
+                container.layout().addWidget(divider)
+        self._add_lumi_message(answer, show_logo=False)
         duration_label = QLabel(f"Completed in {self._format_elapsed(duration)}")
         duration_label.setObjectName("muted")
         duration_label.setStyleSheet("color: #8D97B8; font-size: 9pt;")
